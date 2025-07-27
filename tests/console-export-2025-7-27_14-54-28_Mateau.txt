@@ -1,0 +1,197 @@
+Navigated to http://localhost:9000/
+Generate random map main.js:312:19
+Generated Map 590449789 main.js:686:21
+placePoints: 3ms - timer ended graphUtils.js:35:19
+calculateDelaunay: 16ms - timer ended graphUtils.js:45:19
+calculateVoronoi: 37ms - timer ended graphUtils.js:53:19
+defineHeightmap: 16ms - timer ended heightmap-generator.js:71:21
+markupGrid: 7ms - timer ended features.js:77:21
+addLakesInDeepDepressions: 3ms - timer ended main.js:846:19
+openLakes: 4ms - timer ended main.js:889:19
+drawOceanLayers: 12ms - timer ended ocean-layers.js:50:21
+calculateTemperatures: 2ms - timer ended main.js:1014:19
+generatePrecipitation: 4ms - timer ended main.js:1177:19
+calculateDelaunay: 7ms - timer ended graphUtils.js:45:19
+calculateVoronoi: 13ms - timer ended graphUtils.js:53:19
+reGraph: 32ms - timer ended main.js:1231:19
+markupPack: 12ms - timer ended features.js:144:21
+createDefaultRuler: 0ms - timer ended measurers.js:560:19
+generateRivers: 87ms - timer ended river-generator.js:36:21
+defineBiomes: 2ms - timer ended biomes.js:105:21
+rankCells: 2ms - timer ended main.js:1279:19
+generateCultures: 21ms - timer ended cultures-generator.js:178:21
+expandCultures: 6ms - timer ended cultures-generator.js:609:21
+placeCapitals: 1ms - timer ended burgs-and-states.js:67:23
+createStates: 3ms - timer ended burgs-and-states.js:110:23
+placeTowns: 9ms - timer ended burgs-and-states.js:155:23
+expandStates: 7ms - timer ended burgs-and-states.js:379:21
+normalizeStates: 2ms - timer ended burgs-and-states.js:398:21
+specifyBurgs: 7ms - timer ended burgs-and-states.js:222:21
+collectStatistics: 3ms - timer ended burgs-and-states.js:467:21
+assignColors: 0ms - timer ended burgs-and-states.js:492:21
+generateDiplomacy: 0ms - timer ended burgs-and-states.js:709:21
+generateMainRoads: 23ms - timer ended routes-generator.js:68:23
+generateTrails: 64ms - timer ended routes-generator.js:91:23
+generateSeaRoutes: 48ms - timer ended routes-generator.js:114:23
+generateReligions: 11ms - timer ended religions-generator.js:472:21
+defineStateForms: 1ms - timer ended burgs-and-states.js:837:21
+generateProvinces: 23ms - timer ended provinces-generator.js:242:21
+generateMilitary: 45ms - timer ended military-generator.js:313:21
+addMarkers: 39ms - timer ended markers-generator.js:127:21
+generateZones: 3ms - timer ended zones-generator.js:30:21
+TOTAL: 0.61s main.js:734:21
+  Seed: 590449789
+    Canvas size: 1475x848 px
+    Heightmap: shattered
+    Template: random template
+    Points: 10032
+    Cells: 5315
+    Map size: 15%
+    States: 14
+    Provinces: 118
+    Burgs: 360
+    Religions: 13
+    Culture set: darkFantasy
+    Cultures: 10 main.js:1305:19
+drawFeatures: 13ms - timer ended draw-features.js:49:19
+drawRivers: 13ms - timer ended layers.js:814:19
+drawStates: 8ms - timer ended layers.js:562:19
+drawBorders: 9ms - timer ended draw-borders.js:119:19
+drawRoutes: 10ms - timer ended layers.js:845:19
+drawIce: 4ms - timer ended layers.js:460:19
+drawStateLabels: 59ms - timer ended draw-state-labels.js:311:19
+drawBurgLabels: 4ms - timer ended draw-burg-labels.js:40:19
+drawBurgIcons: 5ms - timer ended draw-burg-icons.js:68:19
+Some cookies are misusing the recommended “SameSite“ attribute 4
+Feature Policy: Skipping unsupported feature name “clipboard-read”. openwidget.js:1:37657
+Feature Policy: Skipping unsupported feature name “clipboard-write”. openwidget.js:1:37657
+Feature Policy: Skipping unsupported feature name “clipboard-read”. openwidget.js:1:37683
+Feature Policy: Skipping unsupported feature name “clipboard-write”. openwidget.js:1:37683
+Feature Policy: Skipping unsupported feature name “clipboard-read”. openwidget.js:1:38629
+Feature Policy: Skipping unsupported feature name “clipboard-write”. openwidget.js:1:38629
+Partitioned cookie or storage access was provided to “https://cdn.openwidget.com/widget/openwidget.html?embedded=1&widget_version=3&organizationId=7bb02e70-bcef-4861-a4e6-d259b0d10e24&use_parent_storage=1&x-region=” because it is loaded in the third-party context and dynamic state partitioning is enabled.
+Request to access cookie or storage on “https://accounts.livechatinc.com/v2/customer/token” was blocked because it came from a tracker and content blocking is enabled.
+Generate new random map main.js:1309:19
+Generated Map 1234567 main.js:686:21
+placePoints: 7ms - timer ended graphUtils.js:35:19
+calculateDelaunay: 54ms - timer ended graphUtils.js:45:19
+calculateVoronoi: 39ms - timer ended graphUtils.js:53:19
+defineHeightmap: 13ms - timer ended heightmap-generator.js:71:21
+markupGrid: 6ms - timer ended features.js:77:21
+addLakesInDeepDepressions: 3ms - timer ended main.js:846:19
+openLakes: 2ms - timer ended main.js:889:19
+drawOceanLayers: 11ms - timer ended ocean-layers.js:50:21
+calculateTemperatures: 1ms - timer ended main.js:1014:19
+generatePrecipitation: 2ms - timer ended main.js:1177:19
+calculateDelaunay: 4ms - timer ended graphUtils.js:45:19
+calculateVoronoi: 8ms - timer ended graphUtils.js:53:19
+reGraph: 23ms - timer ended main.js:1231:19
+markupPack: 10ms - timer ended features.js:144:21
+createDefaultRuler: 0ms - timer ended measurers.js:560:19
+generateRivers: 42ms - timer ended river-generator.js:36:21
+defineBiomes: 2ms - timer ended biomes.js:105:21
+rankCells: 3ms - timer ended main.js:1279:19
+generateCultures: 21ms - timer ended cultures-generator.js:178:21
+expandCultures: 9ms - timer ended cultures-generator.js:609:21
+placeCapitals: 1ms - timer ended burgs-and-states.js:67:23
+createStates: 7ms - timer ended burgs-and-states.js:110:23
+placeTowns: 5ms - timer ended burgs-and-states.js:155:23
+expandStates: 7ms - timer ended burgs-and-states.js:379:21
+normalizeStates: 2ms - timer ended burgs-and-states.js:398:21
+specifyBurgs: 6ms - timer ended burgs-and-states.js:222:21
+collectStatistics: 2ms - timer ended burgs-and-states.js:467:21
+assignColors: 1ms - timer ended burgs-and-states.js:492:21
+generateDiplomacy: 1ms - timer ended burgs-and-states.js:709:21
+generateMainRoads: 11ms - timer ended routes-generator.js:68:23
+generateTrails: 22ms - timer ended routes-generator.js:91:23
+generateSeaRoutes: 37ms - timer ended routes-generator.js:114:23
+generateReligions: 6ms - timer ended religions-generator.js:472:21
+defineStateForms: 0ms - timer ended burgs-and-states.js:837:21
+generateProvinces: 19ms - timer ended provinces-generator.js:242:21
+generateMilitary: 39ms - timer ended military-generator.js:313:21
+addMarkers: 18ms - timer ended markers-generator.js:127:21
+generateZones: 6ms - timer ended zones-generator.js:30:21
+TOTAL: 0.48s main.js:734:21
+  Seed: 1234567
+    Canvas size: 300x300 px
+    Heightmap: archipelago
+    Template: random template
+    Points: 10000
+    Cells: 4342
+    Map size: 73%
+    States: 13
+    Provinces: 106
+    Burgs: 312
+    Religions: 19
+    Culture set: european
+    Cultures: 11 main.js:1305:19
+drawFeatures: 6ms - timer ended draw-features.js:49:19
+drawRivers: 8ms - timer ended layers.js:814:19
+drawStates: 5ms - timer ended layers.js:562:19
+drawBorders: 8ms - timer ended draw-borders.js:119:19
+drawRoutes: 8ms - timer ended layers.js:845:19
+drawIce: 12ms - timer ended layers.js:460:19
+drawStateLabels: 22ms - timer ended draw-state-labels.js:311:19
+drawBurgLabels: 3ms - timer ended draw-burg-labels.js:40:19
+drawBurgIcons: 4ms - timer ended draw-burg-icons.js:68:19
+Generate new random map main.js:1309:19
+Generated Map 651658815 main.js:686:21
+defineHeightmap: 62ms - timer ended heightmap-generator.js:71:21
+markupGrid: 7ms - timer ended features.js:77:21
+addLakesInDeepDepressions: 59ms - timer ended main.js:846:19
+openLakes: 3ms - timer ended main.js:889:19
+drawOceanLayers: 8ms - timer ended ocean-layers.js:50:21
+calculateTemperatures: 2ms - timer ended main.js:1014:19
+generatePrecipitation: 3ms - timer ended main.js:1177:19
+calculateDelaunay: 8ms - timer ended graphUtils.js:45:19
+calculateVoronoi: 18ms - timer ended graphUtils.js:53:19
+reGraph: 35ms - timer ended main.js:1231:19
+markupPack: 8ms - timer ended features.js:144:21
+createDefaultRuler: 1ms - timer ended measurers.js:560:19
+generateRivers: 50ms - timer ended river-generator.js:36:21
+defineBiomes: 2ms - timer ended biomes.js:105:21
+rankCells: 3ms - timer ended main.js:1279:19
+generateCultures: 28ms - timer ended cultures-generator.js:178:21
+expandCultures: 7ms - timer ended cultures-generator.js:609:21
+placeCapitals: 1ms - timer ended burgs-and-states.js:67:23
+createStates: 1ms - timer ended burgs-and-states.js:110:23
+placeTowns: 7ms - timer ended burgs-and-states.js:155:23
+expandStates: 7ms - timer ended burgs-and-states.js:379:21
+normalizeStates: 4ms - timer ended burgs-and-states.js:398:21
+specifyBurgs: 7ms - timer ended burgs-and-states.js:222:21
+collectStatistics: 2ms - timer ended burgs-and-states.js:467:21
+assignColors: 0ms - timer ended burgs-and-states.js:492:21
+generateDiplomacy: 0ms - timer ended burgs-and-states.js:709:21
+generateMainRoads: 39ms - timer ended routes-generator.js:68:23
+generateTrails: 33ms - timer ended routes-generator.js:91:23
+generateSeaRoutes: 9ms - timer ended routes-generator.js:114:23
+generateReligions: 10ms - timer ended religions-generator.js:472:21
+defineStateForms: 0ms - timer ended burgs-and-states.js:837:21
+generateProvinces: 16ms - timer ended provinces-generator.js:242:21
+generateMilitary: 58ms - timer ended military-generator.js:313:21
+addMarkers: 16ms - timer ended markers-generator.js:127:21
+generateZones: 4ms - timer ended zones-generator.js:30:21
+TOTAL: 0.54s main.js:734:21
+  Seed: 651658815
+    Canvas size: 300x300 px
+    Heightmap: lowIsland
+    Template: random template
+    Points: 10000
+    Cells: 4499
+    Map size: 53%
+    States: 5
+    Provinces: 59
+    Burgs: 441
+    Religions: 13
+    Culture set: antique
+    Cultures: 10 main.js:1305:19
+drawFeatures: 6ms - timer ended draw-features.js:49:19
+drawRivers: 11ms - timer ended layers.js:814:19
+drawStates: 5ms - timer ended layers.js:562:19
+drawBorders: 9ms - timer ended draw-borders.js:119:19
+drawRoutes: 9ms - timer ended layers.js:845:19
+drawIce: 7ms - timer ended layers.js:460:19
+drawStateLabels: 18ms - timer ended draw-state-labels.js:311:19
+drawBurgLabels: 6ms - timer ended draw-burg-labels.js:40:19
+drawBurgIcons: 3ms - timer ended draw-burg-icons.js:68:19
+exportToJson: 85ms - timer ended export-json.js:23:19

@@ -1,0 +1,76 @@
+Navigated to http://localhost:9000/
+Some cookies are misusing the recommended “SameSite“ attribute 4
+Generate random map main.js:312:19
+Generated Map 415283749 main.js:686:21
+placePoints: 1ms - timer ended graphUtils.js:35:19
+calculateDelaunay: 16ms - timer ended graphUtils.js:45:19
+calculateVoronoi: 31ms - timer ended graphUtils.js:53:19
+defineHeightmap: 22ms - timer ended heightmap-generator.js:71:21
+markupGrid: 8ms - timer ended features.js:77:21
+addLakesInDeepDepressions: 13ms - timer ended main.js:846:19
+openLakes: 1ms - timer ended main.js:889:19
+drawOceanLayers: 8ms - timer ended ocean-layers.js:50:21
+calculateTemperatures: 1ms - timer ended main.js:1014:19
+generatePrecipitation: 1ms - timer ended main.js:1177:19
+calculateDelaunay: 7ms - timer ended graphUtils.js:45:19
+calculateVoronoi: 17ms - timer ended graphUtils.js:53:19
+reGraph: 30ms - timer ended main.js:1231:19
+markupPack: 11ms - timer ended features.js:144:21
+createDefaultRuler: 1ms - timer ended measurers.js:560:19
+generateRivers: 97ms - timer ended river-generator.js:36:21
+defineBiomes: 3ms - timer ended biomes.js:105:21
+rankCells: 3ms - timer ended main.js:1279:19
+generateCultures: 27ms - timer ended cultures-generator.js:178:21
+expandCultures: 7ms - timer ended cultures-generator.js:609:21
+placeCapitals: 1ms - timer ended burgs-and-states.js:67:23
+createStates: 5ms - timer ended burgs-and-states.js:110:23
+placeTowns: 6ms - timer ended burgs-and-states.js:155:23
+expandStates: 8ms - timer ended burgs-and-states.js:379:21
+normalizeStates: 6ms - timer ended burgs-and-states.js:398:21
+specifyBurgs: 6ms - timer ended burgs-and-states.js:222:21
+collectStatistics: 2ms - timer ended burgs-and-states.js:467:21
+assignColors: 1ms - timer ended burgs-and-states.js:492:21
+generateDiplomacy: 1ms - timer ended burgs-and-states.js:709:21
+generateMainRoads: 37ms - timer ended routes-generator.js:68:23
+generateTrails: 41ms - timer ended routes-generator.js:91:23
+generateSeaRoutes: 15ms - timer ended routes-generator.js:114:23
+generateReligions: 7ms - timer ended religions-generator.js:472:21
+defineStateForms: 0ms - timer ended burgs-and-states.js:837:21
+generateProvinces: 19ms - timer ended provinces-generator.js:242:21
+generateMilitary: 47ms - timer ended military-generator.js:313:21
+addMarkers: 29ms - timer ended markers-generator.js:127:21
+generateZones: 4ms - timer ended zones-generator.js:30:21
+TOTAL: 0.56s main.js:734:21
+  Seed: 415283749
+    Canvas size: 1475x848 px
+    Heightmap: highIsland
+    Template: random template
+    Points: 10032
+    Cells: 4706
+    Map size: 100%
+    States: 17
+    Provinces: 119
+    Burgs: 391
+    Religions: 16
+    Culture set: antique
+    Cultures: 10 main.js:1305:19
+drawFeatures: 8ms - timer ended draw-features.js:49:19
+drawRivers: 14ms - timer ended layers.js:814:19
+drawStates: 5ms - timer ended layers.js:562:19
+drawBorders: 15ms - timer ended draw-borders.js:119:19
+drawRoutes: 7ms - timer ended layers.js:845:19
+drawIce: 18ms - timer ended layers.js:460:19
+drawStateLabels: 78ms - timer ended draw-state-labels.js:311:19
+drawBurgLabels: 5ms - timer ended draw-burg-labels.js:40:19
+drawBurgIcons: 4ms - timer ended draw-burg-icons.js:68:19
+Feature Policy: Skipping unsupported feature name “clipboard-read”. openwidget.js:1:37657
+Feature Policy: Skipping unsupported feature name “clipboard-write”. openwidget.js:1:37657
+Feature Policy: Skipping unsupported feature name “clipboard-read”. openwidget.js:1:37683
+Feature Policy: Skipping unsupported feature name “clipboard-write”. openwidget.js:1:37683
+Feature Policy: Skipping unsupported feature name “clipboard-read”. openwidget.js:1:38629
+Feature Policy: Skipping unsupported feature name “clipboard-write”. openwidget.js:1:38629
+Partitioned cookie or storage access was provided to “https://cdn.openwidget.com/widget/openwidget.html?embedded=1&widget_version=3&organizationId=7bb02e70-bcef-4861-a4e6-d259b0d10e24&use_parent_storage=1&x-region=” because it is loaded in the third-party context and dynamic state partitioning is enabled.
+Request to access cookie or storage on “https://accounts.livechatinc.com/v2/customer/token” was blocked because it came from a tracker and content blocking is enabled.
+An AudioContext was prevented from starting automatically. It must be created or resumed after a user gesture on the page. 1.D-Opsb2_.chunk.js:1:8532
+An AudioContext was prevented from starting automatically. It must be created or resumed after a user gesture on the page. openwidget.js:1:17135
+exportToJson: 105ms - timer ended export-json.js:23:19
