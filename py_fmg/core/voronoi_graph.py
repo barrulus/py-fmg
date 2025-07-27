@@ -4,6 +4,7 @@ import numpy as np
 from scipy.spatial import Voronoi
 from typing import Dict, List, Tuple, NamedTuple
 import structlog
+from .alea_prng import AleaPRNG
 
 logger = structlog.get_logger()
 
@@ -50,21 +51,25 @@ def get_jittered_grid(width: float, height: float, spacing: float, seed: str = N
     Returns:
         Array of [x, y] point coordinates
     """
-    if seed:
-        np.random.seed(hash(seed) % (2**32))
+    # Use Alea PRNG to match FMG exactly
+    prng = AleaPRNG(seed) if seed else AleaPRNG("default")
     
-    radius = spacing / 2  # Grid cell radius
-    jittering = radius * 0.9  # Maximum deviation (45% of spacing)
+    radius = spacing / 2  # square radius
+    jittering = radius * 0.9  # max deviation
+    double_jittering = jittering * 2
+    
+    def jitter():
+        return prng.random() * double_jittering - jittering
     
     points = []
     y = radius
     while y < height:
         x = radius
         while x < width:
-            # Add random jitter
-            x_jittered = min(x + np.random.uniform(-jittering, jittering), width)
-            y_jittered = min(y + np.random.uniform(-jittering, jittering), height)
-            points.append([x_jittered, y_jittered])
+            # Add random jitter matching FMG's implementation
+            xj = min(round(x + jitter(), 2), width)
+            yj = min(round(y + jitter(), 2), height)
+            points.append([xj, yj])
             x += spacing
         y += spacing
     
@@ -86,25 +91,26 @@ def get_boundary_points(width: float, height: float, spacing: float) -> np.ndarr
     Returns:
         Array of boundary point coordinates
     """
-    offset = -spacing  # Move boundary outward
-    b_spacing = spacing * 2  # Larger spacing for boundary
+    offset = round(-1 * spacing)  # FMG uses rn(-1 * spacing)
+    b_spacing = spacing * 2
     w = width - offset * 2
     h = height - offset * 2
     
-    number_x = max(1, int(np.ceil(w / b_spacing)) - 1)
-    number_y = max(1, int(np.ceil(h / b_spacing)) - 1)
+    number_x = int(np.ceil(w / b_spacing) - 1)
+    number_y = int(np.ceil(h / b_spacing) - 1)
     
     points = []
     
-    # Top and bottom edges
+    # Match FMG's loop: for (let i = 0.5; i < numberX; i++)
     for i in range(number_x):
-        x = int((w * (i + 0.5)) / number_x + offset)
-        points.extend([[x, offset], [x, h + offset]])
+        x = int(np.ceil((w * (i + 0.5)) / number_x + offset))
+        points.append([x, offset])
+        points.append([x, h + offset])
     
-    # Left and right edges  
     for i in range(number_y):
-        y = int((h * (i + 0.5)) / number_y + offset)
-        points.extend([[offset, y], [w + offset, y]])
+        y = int(np.ceil((h * (i + 0.5)) / number_y + offset))
+        points.append([offset, y])
+        points.append([w + offset, y])
     
     return np.array(points)
 
@@ -123,10 +129,12 @@ def build_cell_connectivity(vor: Voronoi, n_grid_points: int) -> Tuple[List[List
     Returns:
         Tuple of (cell_neighbors, border_flags)
     """
+    logger.info(f"Starting build_cell_connectivity with {n_grid_points} grid points")
     cell_neighbors = [[] for _ in range(n_grid_points)]
     border_flags = np.zeros(n_grid_points, dtype=np.uint8)
     
     # Build neighbor relationships from ridge_points
+    logger.info(f"Processing {len(vor.ridge_points)} ridge points")
     for ridge_points in vor.ridge_points:
         p1, p2 = ridge_points
         
@@ -135,18 +143,27 @@ def build_cell_connectivity(vor: Voronoi, n_grid_points: int) -> Tuple[List[List
             cell_neighbors[p1].append(p2)
             cell_neighbors[p2].append(p1)
     
-    # Detect border cells (fewer neighbors than expected)
+    logger.info("Starting border detection")
+    
+    # First, build a set of cells that connect to boundary points
+    border_cells = set()
+    for ridge_points in vor.ridge_points:
+        p1, p2 = ridge_points
+        if p1 < n_grid_points and p2 >= n_grid_points:
+            border_cells.add(p1)
+        elif p2 < n_grid_points and p1 >= n_grid_points:
+            border_cells.add(p2)
+    
+    # Now process all cells
     for i in range(n_grid_points):
         # Remove duplicates and sort for consistency
         cell_neighbors[i] = sorted(list(set(cell_neighbors[i])))
         
-        # Border detection: cells with connections to boundary points
-        for ridge_points in vor.ridge_points:
-            p1, p2 = ridge_points
-            if (p1 == i and p2 >= n_grid_points) or (p2 == i and p1 >= n_grid_points):
-                border_flags[i] = 1
-                break
+        # Set border flag if this cell connects to boundary
+        if i in border_cells:
+            border_flags[i] = 1
     
+    logger.info("build_cell_connectivity completed")
     return cell_neighbors, border_flags
 
 
@@ -194,12 +211,13 @@ def build_cell_vertices(vor: Voronoi, n_grid_points: int) -> List[List[int]]:
     return cell_vertices
 
 
-def build_vertex_connectivity(vor: Voronoi) -> Tuple[List[List[int]], List[List[int]]]:
+def build_vertex_connectivity(vor: Voronoi, n_grid_points: int) -> Tuple[List[List[int]], List[List[int]]]:
     """
     Build vertex connectivity from Voronoi diagram.
     
     Args:
         vor: scipy Voronoi diagram
+        n_grid_points: Number of grid points (excluding boundary)
         
     Returns:
         Tuple of (vertex_neighbors, vertex_cells)
@@ -217,8 +235,8 @@ def build_vertex_connectivity(vor: Voronoi) -> Tuple[List[List[int]], List[List[
             vertex_neighbors[v1].append(v2)
             vertex_neighbors[v2].append(v1)
     
-    # Build vertex-cell connections
-    for cell_idx, cell_vertices in enumerate(build_cell_vertices(vor, len(vor.points))):
+    # Build vertex-cell connections (only for grid cells, not boundary)
+    for cell_idx, cell_vertices in enumerate(build_cell_vertices(vor, n_grid_points)):
         for vertex_idx in cell_vertices:
             if vertex_idx < n_vertices:
                 vertex_cells[vertex_idx].append(cell_idx)
@@ -274,9 +292,13 @@ def generate_voronoi_graph(config: GridConfig, seed: str = None) -> VoronoiGraph
                 vertices=len(vor.vertices), ridges=len(vor.ridge_points))
     
     # Build FMG-compatible data structures
+    logger.info("Building cell connectivity...")
     cell_neighbors, border_flags = build_cell_connectivity(vor, len(grid_points))
+    logger.info("Building cell vertices...")
     cell_vertices = build_cell_vertices(vor, len(grid_points))
-    vertex_neighbors, vertex_cells = build_vertex_connectivity(vor)
+    logger.info("Building vertex connectivity...")
+    vertex_neighbors, vertex_cells = build_vertex_connectivity(vor, len(grid_points))
+    logger.info("All connectivity built")
     
     return VoronoiGraph(
         spacing=spacing,

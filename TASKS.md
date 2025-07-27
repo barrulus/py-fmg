@@ -63,65 +63,65 @@ Based on analysis of the Fantasy Map Generator (FMG) codebase and PLAN.md requir
 #### Implementation Tasks
 
 ##### Task 1: Analyze FMG core generation modules to understand the algorithm flow
-- [ ] Study main.js generation pipeline (lines 616-698)
-- [ ] Identify key module dependencies and execution order
-- [ ] Document the complete flow: Grid → Heightmap → Features → Climate → Hydrology → Biomes → Settlements
-- [ ] Map out data structures passed between modules
+- [x] Study main.js generation pipeline (lines 616-698)
+- [x] Identify key module dependencies and execution order
+- [x] Document the complete flow: Grid → Heightmap → Features → Climate → Hydrology → Biomes → Settlements
+- [x] Map out data structures passed between modules
 
 ##### Task 2: Identify key JavaScript modules for heightmap generation
-- [ ] Analyze modules/heightmap-generator.js algorithms
-- [ ] Study template system and procedural generation methods
-- [ ] Document Hill, Range, Trough, Pit, and Strait algorithms
-- [ ] Understand power factors and blob spreading mechanics
+- [x] Analyze modules/heightmap-generator.js algorithms
+- [x] Study template system and procedural generation methods
+- [x] Document Hill, Range, Trough, Pit, and Strait algorithms
+- [x] Understand power factors and blob spreading mechanics
 
 ##### Task 3: Analyze Voronoi diagram generation and graph creation logic
-- [ ] Study utils/graphUtils.js grid generation functions
-- [ ] Analyze modules/voronoi.js Voronoi construction
-- [ ] Understand Delaunator integration and cell connectivity
-- [ ] Document graph data structures and neighbor relationships
+- [x] Study utils/graphUtils.js grid generation functions
+- [x] Analyze modules/voronoi.js Voronoi construction
+- [x] Understand Delaunator integration and cell connectivity
+- [x] Document graph data structures and neighbor relationships
 
 ##### Task 4: Study hydrology and river generation algorithms
-- [ ] Analyze modules/river-generator.js water flow simulation
-- [ ] Study depression filling and drainage algorithms
-- [ ] Understand lake detection and outlet calculation
-- [ ] Document river meandering and width calculation methods
+- [x] Analyze modules/river-generator.js water flow simulation
+- [x] Study depression filling and drainage algorithms
+- [x] Understand lake detection and outlet calculation
+- [x] Document river meandering and width calculation methods
 
 ##### Task 5: Examine biome assignment and attribute logic
-- [ ] Study modules/biomes.js classification system
-- [ ] Analyze temperature/moisture matrix lookup
-- [ ] Understand special biome conditions (wetland, desert, permafrost)
-- [ ] Document river influence on biome assignment
+- [x] Study modules/biomes.js classification system
+- [x] Analyze temperature/moisture matrix lookup
+- [x] Understand special biome conditions (wetland, desert, permafrost)
+- [x] Document river influence on biome assignment
 
 ##### Task 6: Analyze burgs (cities/towns) and states generation
-- [ ] Study modules/burgs-and-states.js settlement placement
-- [ ] Analyze capital placement scoring and spacing algorithms
-- [ ] Understand state expansion and political boundary creation
-- [ ] Document population calculation and urban hierarchy
+- [x] Study modules/burgs-and-states.js settlement placement
+- [x] Analyze capital placement scoring and spacing algorithms
+- [x] Understand state expansion and political boundary creation
+- [x] Document population calculation and urban hierarchy
 
 ##### Task 7: Core Infrastructure - Set up Python project structure
-- [ ] Initialize Python project with proper directory structure
-- [ ] Set up virtual environment and dependency management (poetry/pip)
-- [ ] Create configuration management system
-- [ ] Implement logging and error handling framework
-- [ ] Set up database connection utilities
+- [x] Initialize Python project with proper directory structure
+- [x] Set up virtual environment and dependency management (poetry/pip)
+- [x] Create configuration management system
+- [x] Implement logging and error handling framework
+- [x] Set up database connection utilities
 
 ##### Task 8: Voronoi Graph Generation - Port grid generation and Voronoi calculation
 - **Note:** This is a high-risk foundational task. The output must be topologically identical to FMG's graph structure.
-- [ ] Port `getJitteredGrid()` and `getBoundaryPoints()` from `utils/graphUtils.js`.
-- [ ] Use `scipy.spatial.Voronoi` to generate the initial Voronoi diagram.
-- [ ] **Crucial:** Develop an "adapter" layer to convert the `scipy.spatial.Voronoi` output into the cell-centric graph data structure that FMG's algorithms expect (e.g., cell neighbors, ordered vertices for each cell).
-- [ ] Create a dedicated, robust test suite for this module to validate its topology against FMG reference data.
+- [x] Port `getJitteredGrid()` and `getBoundaryPoints()` from `utils/graphUtils.js`.
+- [x] Use `scipy.spatial.Voronoi` to generate the initial Voronoi diagram.
+- [x] **Crucial:** Develop an "adapter" layer to convert the `scipy.spatial.Voronoi` output into the cell-centric graph data structure that FMG's algorithms expect (e.g., cell neighbors, ordered vertices for each cell).
+- [x] Create a dedicated, robust test suite for this module to validate its topology against FMG reference data.
 
 ##### Task 9: Heightmap Generation - Port heightmap templates and algorithms
 - **Recommendation:** Implement algorithms using NumPy vectorization for massive performance gains over iterative loops.
-- [ ] Port heightmap template system from `modules/heightmap-generator.js`.
-- [ ] Implement procedural algorithms, refactoring them to use NumPy array operations:
-  - [ ] `addHill()` - blob spreading algorithm
-  - [ ] `addRange()` - mountain range generation
-  - [ ] `addTrough()` - valley creation
-  - [ ] `addPit()` - depression creation (lines 165-199)
-  - [ ] `addStrait()` - water channel cutting (lines 392-448)
-- [ ] Port terrain modification functions (`smooth`, `mask`, `modify`) using NumPy.
+- [x] Port heightmap template system from `modules/heightmap-generator.js`.
+- [x] Implement procedural algorithms, refactoring them to use NumPy array operations:
+  - [x] `addHill()` - blob spreading algorithm
+  - [x] `addRange()` - mountain range generation
+  - [x] `addTrough()` - valley creation
+  - [x] `addPit()` - depression creation (lines 165-199)
+  - [x] `addStrait()` - water channel cutting (lines 392-448)
+- [x] Port terrain modification functions (`smooth`, `mask`, `modify`) using NumPy.
 - [ ] Implement PNG heightmap import using Rasterio.
 
 ##### Task 10: Geographic Features - Port ocean/land detection and basic features

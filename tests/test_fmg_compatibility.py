@@ -72,7 +72,9 @@ class TestVoronoiTopologyCompatibility:
             cells_desired=self.cells_desired  # Use FMG's cellsDesired parameter
         )
         
-        python_graph = generate_voronoi_graph(config, seed=self.seed)
+        # Use seed 1234567 because FMG reused the grid from that generation
+        # (as shown in console output - no placePoints after seed 651658815)
+        python_graph = generate_voronoi_graph(config, seed="1234567")
         
         # Extract reference grid points (not pack.cells points)
         fmg_points = np.array(self.grid_points)
@@ -109,7 +111,8 @@ class TestVoronoiTopologyCompatibility:
             cells_desired=self.cells_desired
         )
         
-        python_graph = generate_voronoi_graph(config, seed=self.seed)
+        # Use seed 1234567 because FMG reused the grid from that generation
+        python_graph = generate_voronoi_graph(config, seed="1234567")
         
         # Track topology mismatches for detailed reporting
         mismatches = []
@@ -169,7 +172,8 @@ class TestVoronoiTopologyCompatibility:
             cells_desired=self.cells_desired
         )
         
-        python_graph = generate_voronoi_graph(config, seed=self.seed)
+        # Use seed 1234567 because FMG reused the grid from that generation
+        python_graph = generate_voronoi_graph(config, seed="1234567")
         
         # Track vertex connectivity mismatches
         mismatches = []
@@ -225,31 +229,23 @@ class TestVoronoiTopologyCompatibility:
             cells_desired=self.n_cells
         )
         
-        python_graph = generate_voronoi_graph(config, seed=self.seed)
+        # Use seed 1234567 because FMG reused the grid from that generation
+        python_graph = generate_voronoi_graph(config, seed="1234567")
         
         # Count border cells in our implementation
         py_border_count = np.sum(python_graph.cell_border_flags)
         
-        # Estimate border cells from FMG data by checking cells near edges
-        # (FMG doesn't explicitly store border flags in the JSON)
-        fmg_border_estimate = 0
-        margin = 20  # Distance from edge to consider "border"
-        
-        for cell in self.cells:
-            x, y = cell['p']
-            if (x < margin or x > self.width - margin or 
-                y < margin or y > self.height - margin):
-                fmg_border_estimate += 1
+        # FMG stores border flags in the 'b' field
+        fmg_border_count = sum(1 for cell in self.grid['cells'] if cell.get('b', 0) == 1)
         
         print(f"Python border cells: {py_border_count}")
-        print(f"FMG border estimate: {fmg_border_estimate}")
+        print(f"FMG border cells: {fmg_border_count}")
         
-        # Allow reasonable tolerance for border detection differences
-        ratio = py_border_count / fmg_border_estimate if fmg_border_estimate > 0 else 0
-        assert 0.5 < ratio < 2.0, \
-            f"Border cell count ratio out of reasonable range: {ratio:.2f}"
+        # Border detection should match exactly
+        assert py_border_count == fmg_border_count, \
+            f"Border cell count mismatch: Python={py_border_count}, FMG={fmg_border_count}"
         
-        print(f"✅ Border cell detection reasonable (ratio: {ratio:.2f})")
+        print("✅ Border cell detection matches exactly!")
     
     @pytest.mark.slow
     def test_reproducibility_with_reference_seed(self):

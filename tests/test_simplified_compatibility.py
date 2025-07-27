@@ -43,12 +43,16 @@ class TestSimplifiedCompatibility:
             cells_desired=self.cells_desired
         )
         
+        print("Generating Voronoi graph...")
         python_graph = generate_voronoi_graph(config, seed=self.seed)
+        print("Voronoi graph generated!")
         
         # Should generate same number of points
+        print(f"Checking points: Python={len(python_graph.points)}, FMG={len(self.grid['points'])}")
         assert len(python_graph.points) == len(self.grid['points'])
         
         # Grid parameters should match
+        print(f"Checking grid parameters...")
         assert python_graph.spacing == self.grid['spacing']
         assert python_graph.cells_x == self.grid['cellsX']
         assert python_graph.cells_y == self.grid['cellsY']
