@@ -8,8 +8,7 @@ using NumPy for vectorized operations and better performance.
 import numpy as np
 from typing import Optional, Tuple, Union, List
 from dataclasses import dataclass
-import random
-from ..utils.random import set_random_seed
+from ..utils.random import set_random_seed, get_prng
 
 
 @dataclass
@@ -49,6 +48,9 @@ class HeightmapGenerator:
         # Calculate power factors based on cell count
         self.blob_power = self._get_blob_power(config.cells_desired)
         self.line_power = self._get_line_power(config.cells_desired)
+        
+        # Cache PRNG reference
+        self._prng = None
     
     def _get_blob_power(self, cells: int) -> float:
         """Get blob spreading power factor based on cell count."""
@@ -104,6 +106,12 @@ class HeightmapGenerator:
         """Limit values to 0-100 range."""
         return np.clip(value, 0, 100).astype(np.uint8)
     
+    def _random(self) -> float:
+        """Get next random value from Alea PRNG."""
+        if self._prng is None:
+            self._prng = get_prng()
+        return self._prng.random()
+    
     def _get_number_in_range(self, value: Union[int, float, str]) -> float:
         """Parse number range string and return a random value within it."""
         if isinstance(value, (int, float)):
@@ -111,7 +119,7 @@ class HeightmapGenerator:
         
         if '-' in str(value):
             min_val, max_val = map(float, str(value).split('-'))
-            return random.uniform(min_val, max_val)
+            return min_val + self._random() * (max_val - min_val)
         
         return float(value)
     
@@ -120,8 +128,8 @@ class HeightmapGenerator:
         if '-' in range_str:
             min_pct, max_pct = map(float, range_str.split('-'))
             min_val = max_val * min_pct / 100
-            max_val = max_val * max_pct / 100
-            return random.uniform(min_val, max_val)
+            max_val_range = max_val * max_pct / 100
+            return min_val + self._random() * (max_val_range - min_val)
         
         pct = float(range_str)
         return max_val * pct / 100
@@ -178,7 +186,7 @@ class HeightmapGenerator:
                 if neighbor not in visited:
                     visited.add(neighbor)
                     # Calculate new height with power decay and randomness
-                    new_height = (current_height ** self.blob_power) * (random.random() * 0.2 + 0.9)
+                    new_height = (current_height ** self.blob_power) * (self._random() * 0.2 + 0.9)
                     
                     if new_height > 1:
                         change[neighbor] = new_height
@@ -224,14 +232,14 @@ class HeightmapGenerator:
         
         while queue:
             current = queue.pop(0)
-            h = (h ** self.blob_power) * (random.random() * 0.2 + 0.9)
+            h = (h ** self.blob_power) * (self._random() * 0.2 + 0.9)
             
             if h < 1:
                 break
             
             for neighbor in self.graph.cell_neighbors[current]:
                 if not used[neighbor]:
-                    depth_factor = h * (random.random() * 0.2 + 0.9)
+                    depth_factor = h * (self._random() * 0.2 + 0.9)
                     self.heights[neighbor] = self._lim(self.heights[neighbor] - depth_factor)
                     used[neighbor] = True
                     queue.append(neighbor)
@@ -272,8 +280,8 @@ class HeightmapGenerator:
             # Find end point with appropriate distance
             limit = 0
             while limit < 50:
-                end_x = random.random() * self.config.width * 0.8 + self.config.width * 0.1
-                end_y = random.random() * self.config.height * 0.7 + self.config.height * 0.15
+                end_x = self._random() * self.config.width * 0.8 + self.config.width * 0.1
+                end_y = self._random() * self.config.height * 0.7 + self.config.height * 0.15
                 dist = abs(end_y - start_y) + abs(end_x - start_x)
                 
                 if self.config.width / 8 <= dist <= self.config.width / 3:
@@ -295,7 +303,7 @@ class HeightmapGenerator:
             
             # Add height to frontier cells
             for cell in frontier:
-                height_add = h * (random.random() * 0.3 + 0.85)
+                height_add = h * (self._random() * 0.3 + 0.85)
                 self.heights[cell] = self._lim(self.heights[cell] + height_add)
             
             # Decay height
@@ -334,7 +342,7 @@ class HeightmapGenerator:
                 dist = diff_x**2 + diff_y**2
                 
                 # Add randomness to path
-                if random.random() > 0.85:
+                if self._random() > 0.85:
                     dist = dist / 2
                 
                 if dist < min_dist:
@@ -409,8 +417,8 @@ class HeightmapGenerator:
             # Find end point
             limit = 0
             while limit < 50:
-                end_x = random.random() * self.config.width * 0.8 + self.config.width * 0.1
-                end_y = random.random() * self.config.height * 0.7 + self.config.height * 0.15
+                end_x = self._random() * self.config.width * 0.8 + self.config.width * 0.1
+                end_y = self._random() * self.config.height * 0.7 + self.config.height * 0.15
                 dist = abs(end_y - start_y) + abs(end_x - start_x)
                 
                 if self.config.width / 8 <= dist <= self.config.width / 2:
@@ -432,7 +440,7 @@ class HeightmapGenerator:
             
             # Remove height from frontier cells
             for cell in frontier:
-                depth = h * (random.random() * 0.3 + 0.85)
+                depth = h * (self._random() * 0.3 + 0.85)
                 self.heights[cell] = self._lim(self.heights[cell] - depth)
             
             # Decay depth
@@ -462,15 +470,15 @@ class HeightmapGenerator:
         
         # Determine start and end points
         if is_vertical:
-            start_x = random.random() * self.config.width * 0.4 + self.config.width * 0.3
+            start_x = self._random() * self.config.width * 0.4 + self.config.width * 0.3
             start_y = 5
-            end_x = self.config.width - start_x - self.config.width * 0.1 + random.random() * self.config.width * 0.2
+            end_x = self.config.width - start_x - self.config.width * 0.1 + self._random() * self.config.width * 0.2
             end_y = self.config.height - 5
         else:
             start_x = 5
-            start_y = random.random() * self.config.height * 0.4 + self.config.height * 0.3
+            start_y = self._random() * self.config.height * 0.4 + self.config.height * 0.3
             end_x = self.config.width - 5
-            end_y = self.config.height - start_y - self.config.height * 0.1 + random.random() * self.config.height * 0.2
+            end_y = self.config.height - start_y - self.config.height * 0.1 + self._random() * self.config.height * 0.2
         
         start_cell = self._find_grid_cell(start_x, start_y)
         end_cell = self._find_grid_cell(end_x, end_y)
@@ -513,7 +521,7 @@ class HeightmapGenerator:
                 diff_y = self.graph.points[end][1] - self.graph.points[neighbor][1]
                 dist = diff_x**2 + diff_y**2
                 
-                if random.random() > 0.8:
+                if self._random() > 0.8:
                     dist = dist / 2
                 
                 if dist < min_dist:
@@ -641,7 +649,7 @@ class HeightmapGenerator:
             axes: "x", "y", or "both"
         """
         prob = self._get_number_in_range(probability)
-        if random.random() > prob:
+        if self._random() > prob:
             return
         
         invert_x = axes != "y"
@@ -679,6 +687,8 @@ class HeightmapGenerator:
         """
         if seed:
             set_random_seed(seed)
+            # Reset our cached PRNG reference to use the new seed
+            self._prng = None
         
         # Parse and execute template commands
         lines = template.strip().split('\n')
