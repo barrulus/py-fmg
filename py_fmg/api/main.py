@@ -11,7 +11,9 @@ from datetime import datetime
 from ..config import settings
 from ..db.connection import db
 from ..db.models import GenerationJob, Map
-from ..core.voronoi_graph import GridConfig, generate_voronoi_graph
+from ..core.voronoi_graph import GridConfig, generate_voronoi_graph, pack_graph
+from ..core.heightmap_generator import HeightmapGenerator, HeightmapConfig
+from ..core.regraph import regraph
 
 # Configure logging
 structlog.configure(
@@ -50,7 +52,9 @@ app.add_middleware(
 class MapGenerationRequest(BaseModel):
     """Request to generate a new map."""
     
-    seed: Optional[str] = Field(None, description="Random seed for reproducible generation")
+    seed: Optional[str] = Field(None, description="Random seed for reproducible generation (deprecated, use grid_seed)")
+    grid_seed: Optional[str] = Field(None, description="Random seed for grid/Voronoi generation")
+    map_seed: Optional[str] = Field(None, description="Random seed for heightmap generation")
     width: float = Field(800, ge=100, le=2000, description="Map width")
     height: float = Field(600, ge=100, le=2000, description="Map height")
     cells_desired: int = Field(10000, ge=1000, le=50000, description="Target number of cells")
@@ -74,7 +78,9 @@ class MapSummary(BaseModel):
     
     id: str
     name: str
-    seed: str
+    seed: str  # Legacy field for backwards compatibility
+    grid_seed: str  # Seed used for Voronoi grid generation
+    map_seed: str   # Seed used for heightmap generation
     width: float
     height: float
     cells_count: int
@@ -134,11 +140,24 @@ async def generate_map(request: MapGenerationRequest, background_tasks: Backgrou
     # Generate unique job ID
     job_id = str(uuid.uuid4())
     
+    # Handle seed logic: support both legacy single seed and new dual seed system
+    if request.grid_seed or request.map_seed:
+        # New dual seed system
+        grid_seed = request.grid_seed or request.map_seed or str(uuid.uuid4())[:8]
+        map_seed = request.map_seed or request.grid_seed or str(uuid.uuid4())[:8]
+    else:
+        # Legacy single seed or fallback
+        legacy_seed = request.seed or str(uuid.uuid4())[:8]
+        grid_seed = legacy_seed
+        map_seed = legacy_seed
+    
     # Create job record
     with db.get_session() as session:
         job = GenerationJob(
             id=job_id,
-            seed=request.seed or str(uuid.uuid4())[:8],
+            seed=request.seed or grid_seed,  # Keep legacy field populated
+            grid_seed=grid_seed,
+            map_seed=map_seed,
             width=request.width,
             height=request.height,
             cells_desired=request.cells_desired,
@@ -193,6 +212,8 @@ async def list_maps():
                 id=str(map.id),
                 name=map.name,
                 seed=map.seed,
+                grid_seed=map.grid_seed,
+                map_seed=map.map_seed,
                 width=map.width,
                 height=map.height,
                 cells_count=map.cells_count,
@@ -216,6 +237,8 @@ async def get_map(map_id: str):
             id=str(map_obj.id),
             name=map_obj.name,
             seed=map_obj.seed,
+            grid_seed=map_obj.grid_seed,
+            map_seed=map_obj.map_seed,
             width=map_obj.width,
             height=map_obj.height,
             cells_count=map_obj.cells_count,
@@ -250,14 +273,12 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest):
             cells_desired=request.cells_desired
         )
         
-        # Use seed from request or job
-        seed = request.seed
-        if not seed:
-            with db.get_session() as session:
-                job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-                seed = job.seed
+        # Get grid seed from job (should use grid_seed for Voronoi generation)
+        with db.get_session() as session:
+            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            grid_seed = job.grid_seed
         
-        voronoi_graph = generate_voronoi_graph(config, seed)
+        voronoi_graph = generate_voronoi_graph(config, grid_seed)
         
         # Update progress
         with db.get_session() as session:
@@ -265,25 +286,73 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest):
             job.progress_percent = 10
             session.commit()
         
+        # Stage 2: Generate heightmap (30% progress)
+        logger.info("Generating heightmap", job_id=job_id)
+        heightmap_config = HeightmapConfig(
+            width=int(request.width),
+            height=int(request.height),
+            cells_x=voronoi_graph.cells_x,
+            cells_y=voronoi_graph.cells_y,
+            cells_desired=request.cells_desired
+        )
+        
+        # Get map seed from job (should use map_seed for heightmap generation)
+        with db.get_session() as session:
+            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            map_seed = job.map_seed
+        
+        heightmap_gen = HeightmapGenerator(heightmap_config, voronoi_graph)
+        heights = heightmap_gen.from_template(request.template_name, map_seed)
+        
+        # Update progress
+        with db.get_session() as session:
+            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job.progress_percent = 30
+            session.commit()
+        
+        # Stage 3: Perform reGraph coastal resampling (35% progress)
+        logger.info("Performing reGraph coastal resampling", job_id=job_id)
+        regraph_result = regraph(voronoi_graph, heights, config, grid_seed)
+        
+        # Update progress
+        with db.get_session() as session:
+            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job.progress_percent = 35
+            session.commit()
+        
+        # Stage 4: Pack the reGraphed data (40% progress)
+        logger.info("Packing reGraphed data", job_id=job_id)
+        # The reGraph result already contains the new Voronoi graph and heights
+        packed_graph = regraph_result.voronoi_graph
+        packed_heights = regraph_result.heights
+        
+        # Update progress
+        with db.get_session() as session:
+            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job.progress_percent = 40
+            session.commit()
+        
         # TODO: Add remaining generation stages:
-        # Stage 2: Generate heightmap (20% progress)
-        # Stage 3: Generate climate (40% progress)  
-        # Stage 4: Generate rivers (60% progress)
-        # Stage 5: Generate biomes (70% progress)
-        # Stage 6: Generate settlements (80% progress)
-        # Stage 7: Generate states (90% progress)
-        # Stage 8: Save to database (100% progress)
+        # Stage 4: Generate climate (60% progress)  
+        # Stage 5: Generate rivers (70% progress)
+        # Stage 6: Generate biomes (80% progress)
+        # Stage 7: Generate settlements (90% progress)
+        # Stage 8: Generate states (95% progress)
+        # Stage 9: Save to database (100% progress)
         
         # For now, create a basic map record
-        map_name = request.map_name or f"Map {seed}"
-        
         with db.get_session() as session:
+            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            map_name = request.map_name or f"Map {job.grid_seed}"
+            
             map_obj = Map(
                 name=map_name,
-                seed=seed,
+                seed=job.seed,  # Legacy field
+                grid_seed=job.grid_seed,
+                map_seed=job.map_seed,
                 width=request.width,
                 height=request.height,
-                cells_count=len(voronoi_graph.points),
+                cells_count=len(packed_graph.points),  # Use packed graph cell count
                 generation_time_seconds=1.0  # Placeholder
             )
             session.add(map_obj)

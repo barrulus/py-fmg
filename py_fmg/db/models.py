@@ -18,7 +18,9 @@ class Map(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
-    seed = Column(String(50), nullable=False)
+    seed = Column(String(50), nullable=False)  # Legacy field for backwards compatibility
+    grid_seed = Column(String(50), nullable=False)  # Seed for Voronoi grid generation
+    map_seed = Column(String(50), nullable=False)   # Seed for heightmap generation
     width = Column(Float, nullable=False)
     height = Column(Float, nullable=False)
     cells_count = Column(Integer, nullable=False)
@@ -162,7 +164,9 @@ class GenerationJob(Base):
     error_message = Column(Text)
     
     # Request parameters
-    seed = Column(String(50))
+    seed = Column(String(50))  # Legacy field for backwards compatibility
+    grid_seed = Column(String(50))  # Seed for Voronoi grid generation
+    map_seed = Column(String(50))   # Seed for heightmap generation
     width = Column(Float)
     height = Column(Float)
     cells_desired = Column(Integer)

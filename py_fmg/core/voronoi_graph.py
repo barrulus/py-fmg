@@ -340,3 +340,100 @@ def find_grid_cell(x: float, y: float, graph: VoronoiGraph) -> int:
     
     # Clamp to valid range
     return min(max(cell_idx, 0), len(graph.points) - 1)
+
+
+def pack_graph(graph: VoronoiGraph, heights: np.ndarray, deep_ocean_threshold: int = 20) -> VoronoiGraph:
+    """
+    Pack the Voronoi graph by removing deep ocean cells.
+    
+    This function replicates FMG's reGraph() functionality which optimizes the graph
+    by removing deep ocean cells (typically height < 20) to reduce memory usage
+    and improve performance for subsequent processing stages.
+    
+    Args:
+        graph: Original Voronoi graph
+        heights: Height values for each cell
+        deep_ocean_threshold: Cells with height below this value are removed
+        
+    Returns:
+        New packed VoronoiGraph with reduced cell count
+    """
+    logger.info("Packing graph", 
+                original_cells=len(graph.points), 
+                threshold=deep_ocean_threshold)
+    
+    # Find cells to keep (above threshold)
+    keep_mask = heights >= deep_ocean_threshold
+    keep_indices = np.where(keep_mask)[0]
+    n_packed = len(keep_indices)
+    
+    logger.info("Cells to pack", kept=n_packed, removed=len(graph.points) - n_packed)
+    
+    # Create old_to_new index mapping
+    old_to_new = np.full(len(graph.points), -1, dtype=int)
+    old_to_new[keep_indices] = np.arange(n_packed)
+    
+    # Pack points array
+    packed_points = graph.points[keep_indices]
+    
+    # Pack cell connectivity - only keep neighbors that are also kept
+    packed_neighbors = []
+    for old_idx in keep_indices:
+        old_neighbors = graph.cell_neighbors[old_idx]
+        new_neighbors = []
+        for neighbor_idx in old_neighbors:
+            if keep_mask[neighbor_idx]:  # Neighbor is kept
+                new_neighbors.append(old_to_new[neighbor_idx])
+        packed_neighbors.append(new_neighbors)
+    
+    # Pack cell vertices - need to rebuild vertex system
+    # For simplicity, we'll keep all vertices but update cell references
+    packed_vertices = []
+    for old_idx in keep_indices:
+        packed_vertices.append(graph.cell_vertices[old_idx])
+    
+    # Pack border flags
+    packed_border_flags = graph.cell_border_flags[keep_indices]
+    
+    # Update vertex connectivity to reference packed cells
+    packed_vertex_neighbors = []
+    packed_vertex_cells = []
+    
+    for v_idx in range(len(graph.vertex_neighbors)):
+        # Keep vertex neighbors as-is (vertex indices don't change)
+        packed_vertex_neighbors.append(graph.vertex_neighbors[v_idx])
+        
+        # Update vertex cells to only reference packed cells
+        old_cells = graph.vertex_cells[v_idx]
+        new_cells = []
+        for cell_idx in old_cells:
+            if keep_mask[cell_idx]:
+                new_cells.append(old_to_new[cell_idx])
+        packed_vertex_cells.append(new_cells)
+    
+    # Calculate new approximate grid dimensions for the packed cells
+    packed_width = np.max(packed_points[:, 0]) - np.min(packed_points[:, 0])
+    packed_height = np.max(packed_points[:, 1]) - np.min(packed_points[:, 1])
+    packed_cells_x = int(packed_width / graph.spacing) + 1
+    packed_cells_y = int(packed_height / graph.spacing) + 1
+    
+    logger.info("Graph packing complete", 
+                packed_cells=n_packed,
+                original_cells=len(graph.points),
+                reduction_pct=round((1 - n_packed/len(graph.points)) * 100, 1))
+    
+    return VoronoiGraph(
+        spacing=graph.spacing,
+        cells_desired=n_packed,  # Update to reflect new reality
+        boundary_points=graph.boundary_points,  # Keep boundary unchanged
+        points=packed_points,
+        cells_x=packed_cells_x,
+        cells_y=packed_cells_y,
+        cell_neighbors=packed_neighbors,
+        cell_vertices=packed_vertices,
+        cell_border_flags=packed_border_flags,
+        vertex_coordinates=graph.vertex_coordinates,  # Keep all vertices
+        vertex_neighbors=packed_vertex_neighbors,
+        vertex_cells=packed_vertex_cells,
+        seed=graph.seed + "_packed"  # Indicate this is packed version
+    )

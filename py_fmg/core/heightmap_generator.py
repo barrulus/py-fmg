@@ -42,8 +42,9 @@ class HeightmapGenerator:
         self.graph = graph
         self.n_cells = len(graph.points)
         
-        # Initialize heights array
-        self.heights = np.zeros(self.n_cells, dtype=np.uint8)
+        # Initialize heights array - use float32 to avoid overflow issues
+        # FMG uses regular JavaScript numbers which can handle values > 255
+        self.heights = np.zeros(self.n_cells, dtype=np.float32)
         
         # Calculate power factors based on cell count
         self.blob_power = self._get_blob_power(config.cells_desired)
@@ -78,15 +79,22 @@ class HeightmapGenerator:
         return 0.98  # default
     
     def _get_line_power(self, cells: int) -> float:
-        """Get line spreading power factor based on cell count."""
-        # Note: FMG has a bug where getLinePower() references undefined 'cells'
-        # This causes it to return the default value of 0.81
-        # For compatibility, we'll just return 0.81
+        """
+        Calculate line power factor - replicates FMG's getLinePower() bug.
+        
+        FMG's getLinePower() function has a bug where it references an undefined 'cells' variable
+        in the local scope (not the parameter). In JavaScript, linePowerMap[undefined] returns
+        undefined, and the || operator then returns the default value of 0.81.
+        
+        For exact FMG compatibility, we replicate this bug behavior by always returning 0.81.
+        """
+        # FMG bug: linePowerMap[undefined] || 0.81 always returns 0.81
         return 0.81
     
-    def _lim(self, value: Union[float, np.ndarray]) -> Union[int, np.ndarray]:
+    def _lim(self, value: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
         """Limit values to 0-100 range."""
-        return np.clip(value, 0, 100).astype(np.uint8)
+        # Keep as float to avoid overflow, FMG rounds at display time
+        return np.clip(value, 0, 100)
     
     def _random(self) -> float:
         """Get next random value from Alea PRNG."""
@@ -101,7 +109,8 @@ class HeightmapGenerator:
         
         if '-' in str(value):
             min_val, max_val = map(float, str(value).split('-'))
-            return min_val + self._random() * (max_val - min_val)
+            # Match JavaScript's rand() which returns integers
+            return float(int(min_val + self._random() * (max_val - min_val + 1)))
         
         return float(value)
     
@@ -111,10 +120,29 @@ class HeightmapGenerator:
             min_pct, max_pct = map(float, range_str.split('-'))
             min_val = max_val * min_pct / 100
             max_val_range = max_val * max_pct / 100
-            return min_val + self._random() * (max_val_range - min_val)
+            # Match JavaScript's rand() which returns integers
+            return float(int(min_val + self._random() * (max_val_range - min_val + 1)))
         
         pct = float(range_str)
         return max_val * pct / 100
+    
+    def _parse_range_bounds(self, range_str: str, max_val: float) -> Tuple[float, float]:
+        """
+        Parse range string to get min and max bounds.
+        
+        Args:
+            range_str: Range string like "5-95" (percentages)
+            max_val: Maximum coordinate value
+            
+        Returns:
+            Tuple of (min_bound, max_bound) in coordinate units
+        """
+        if '-' in range_str:
+            min_pct, max_pct = map(float, range_str.split('-'))
+        else:
+            min_pct = max_pct = float(range_str)
+        
+        return (min_pct * max_val / 100.0, max_pct * max_val / 100.0)
     
     def _find_grid_cell(self, x: float, y: float) -> int:
         """Find the grid cell index for a given x,y coordinate."""
@@ -143,6 +171,10 @@ class HeightmapGenerator:
         change = np.zeros(self.n_cells, dtype=np.float32)
         h = self._lim(self._get_number_in_range(height))
         
+        # Parse range constraints for blob spreading
+        x_min, x_max = self._parse_range_bounds(range_x, self.config.width)
+        y_min, y_max = self._parse_range_bounds(range_y, self.config.height)
+        
         # Find starting point
         limit = 0
         while limit < 50:
@@ -154,25 +186,25 @@ class HeightmapGenerator:
                 break
             limit += 1
         
-        # Spread height using BFS
+        # Spread height using BFS - NO range constraints during spreading (matches FMG)
         change[start] = h
         queue = [start]
-        visited = set([start])
         
         while queue:
             current = queue.pop(0)
-            current_height = change[current]
             
-            # Spread to neighbors
+            # Spread to neighbors without range constraints (like FMG)
             for neighbor in self.graph.cell_neighbors[current]:
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    # Calculate new height with power decay and randomness
-                    new_height = (current_height ** self.blob_power) * (self._random() * 0.2 + 0.9)
+                # CRITICAL: Check if cell already has a change value (like FMG)
+                if change[neighbor] > 0:
+                    continue  # Skip cells that already have height changes
                     
-                    if new_height > 1:
-                        change[neighbor] = new_height
-                        queue.append(neighbor)
+                # Calculate new height with power decay and randomness
+                new_height = (change[current] ** self.blob_power) * (self._random() * 0.2 + 0.9)
+                
+                if new_height > 1:
+                    change[neighbor] = new_height
+                    queue.append(neighbor)
         
         # Apply changes
         self.heights = self._lim(self.heights + change)
@@ -468,7 +500,7 @@ class HeightmapGenerator:
         # Get strait path
         path = self._get_strait_path(start_cell, end_cell)
         
-        # Carve strait with decreasing effect
+        # Carve strait with decreasing effect - match FMG's simpler logic
         step = 0.1 / width
         
         for w in range(width, 0, -1):
@@ -480,11 +512,11 @@ class HeightmapGenerator:
                     if not used[neighbor]:
                         used[neighbor] = True
                         next_layer.append(neighbor)
-                        # Lower the height more aggressively
-                        new_height = self.heights[neighbor] ** exp
-                        if new_height > 20:
-                            new_height = new_height * 0.3  # Additional reduction
-                        self.heights[neighbor] = min(new_height, 15)  # Cap at water level
+                        # Apply exponential lowering like FMG
+                        self.heights[neighbor] = self.heights[neighbor] ** exp
+                        # FMG's strange edge case for values over 100
+                        if self.heights[neighbor] > 100:
+                            self.heights[neighbor] = 5
             
             path = next_layer
     
@@ -656,12 +688,12 @@ class HeightmapGenerator:
         
         self.heights = new_heights
     
-    def from_template(self, template: str, seed: Optional[str] = None) -> np.ndarray:
+    def from_template(self, template_name: str, seed: Optional[str] = None) -> np.ndarray:
         """
-        Generate heightmap from a template string.
+        Generate heightmap from a template name.
         
         Args:
-            template: Multi-line template string with commands
+            template_name: Name of template to load
             seed: Optional random seed
             
         Returns:
@@ -671,6 +703,10 @@ class HeightmapGenerator:
             set_random_seed(seed)
             # Reset our cached PRNG reference to use the new seed
             self._prng = None
+        
+        # Load template by name
+        from ..config.heightmap_templates import get_template
+        template = get_template(template_name)
         
         # Parse and execute template commands
         lines = template.strip().split('\n')
@@ -706,4 +742,6 @@ class HeightmapGenerator:
             elif command == "Invert":
                 self.invert(*args)
         
-        return self.heights
+        # Simulate JavaScript's Uint8Array truncation behavior
+        # When JS assigns float array to Uint8Array, it truncates (floors) values
+        return np.floor(self.heights).astype(np.uint8)

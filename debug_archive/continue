@@ -1,0 +1,21 @@
+● Update(tests/test_simplified_compatibility.py)
+  ⎿  Updated tests/test_simplified_compatibility.py with 1 addition and 1 removal
+       179
+       180        assert 'info' in data
+       181        assert 'grid' in data
+       182 -      assert data['info']['seed'] == 651658815
+       182 +      assert data['info']['seed'] == "651658815"
+       183
+       184        print("✅ Reference file loads correctly")
+       185   \ No newline at end of file
+
+● Bash(source venv/bin/activate && python -m pytest tests/test_simplified_compatibility.py::test_reference_file_loads -v)
+  ⎿  ============================= test session starts ==============================
+     platform linux -- Python 3.11.2, pytest-7.4.4, pluggy-1.6.0 -- /home/user/py-fmg/venv/bin/python
+     cachedir: .pytest_cache
+     … +8 lines (ctrl+r to expand)
+
+● Good! Now let me try one of the simpler tests:
+
+● Bash(source venv/bin/activate && python -m pytest tests/test_simplified_compatibility.py::TestSimplifiedCompatibility::test_basic_parameters_match -v -s)
+  ⎿  No (tell Claude what to do differently)
