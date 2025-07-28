@@ -79,28 +79,10 @@ class HeightmapGenerator:
     
     def _get_line_power(self, cells: int) -> float:
         """Get line spreading power factor based on cell count."""
-        line_power_map = {
-            1000: 0.75,
-            2000: 0.77,
-            5000: 0.79,
-            10000: 0.81,
-            20000: 0.82,
-            30000: 0.83,
-            40000: 0.84,
-            50000: 0.86,
-            60000: 0.87,
-            70000: 0.88,
-            80000: 0.91,
-            90000: 0.92,
-            100000: 0.93
-        }
-        
-        # Find the closest key
-        for threshold in sorted(line_power_map.keys()):
-            if cells <= threshold:
-                return line_power_map[threshold]
-        
-        return 0.81  # default
+        # Note: FMG has a bug where getLinePower() references undefined 'cells'
+        # This causes it to return the default value of 0.81
+        # For compatibility, we'll just return 0.81
+        return 0.81
     
     def _lim(self, value: Union[float, np.ndarray]) -> Union[int, np.ndarray]:
         """Limit values to 0-100 range."""

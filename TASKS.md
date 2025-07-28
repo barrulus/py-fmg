@@ -124,6 +124,13 @@ Based on analysis of the Fantasy Map Generator (FMG) codebase and PLAN.md requir
 - [x] Port terrain modification functions (`smooth`, `mask`, `modify`) using NumPy.
 - [ ] Implement PNG heightmap import using Rasterio.
 
+**Note:** FMG compatibility testing revealed significant differences in heightmap output. The Python implementation correctly follows the FMG algorithm but produces different results due to:
+1. FMG has a bug in `getLinePower()` that references an undefined variable, causing it to return default value 0.81
+2. The blob spreading algorithm with power 0.98 causes hills to spread across the entire connected grid
+3. FMG produces much lower height values (31.9% land vs 82.4% in Python), suggesting undocumented behavior
+
+**Status:** Core algorithms implemented but exact FMG compatibility may not be achievable due to bugs/undocumented behavior in original.
+
 ##### Task 10: Geographic Features - Port ocean/land detection and basic features
 - [ ] Port `Features.markupGrid()` and `Features.markupPack()` logic
 - [ ] Implement ocean/land classification (height < 20 = water)

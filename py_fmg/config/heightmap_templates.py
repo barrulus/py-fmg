@@ -140,7 +140,13 @@ TEMPLATES = {
     Trough 5-8 15-25 5-95 5-95
     Smooth 2 0 0 0""",
     
-    "land": """Add 100 all 0 0"""
+    "land": """Add 100 all 0 0""",
+    
+    "fractious": """Hill 12-15 50-80 5-95 5-95
+    Mask -1.5 0 0 0
+    Mask 3 0 0 0
+    Add -20 30-100 0 0
+    Range 6-8 40-50 5-95 10-90"""
 }
 
 def get_template(name: str) -> str:
