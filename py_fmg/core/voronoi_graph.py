@@ -508,9 +508,3 @@ def find_grid_cell(x: float, y: float, graph: VoronoiGraph) -> int:
     
     # Clamp to valid range
     return min(max(cell_idx, 0), len(graph.points) - 1)
-
-
-# Note: pack_graph has been moved to cell_packing.py as pack_graph_simple
-# The proper implementation is now regraph() which matches FMG's behavior
-# Import it when needed:
-# from .cell_packing import regraph, pack_graph_simple

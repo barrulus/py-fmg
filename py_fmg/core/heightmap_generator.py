@@ -72,12 +72,8 @@ class HeightmapGenerator:
             100000: 0.9973,
         }
 
-        # Find the closest key
-        for threshold in sorted(blob_power_map.keys()):
-            if cells <= threshold:
-                return blob_power_map[threshold]
-
-        return 0.98  # default
+        # Match FMG behavior - exact match or default
+        return blob_power_map.get(cells, 0.98)
 
     def _get_line_power(self, cells: int) -> float:
         """
@@ -186,7 +182,9 @@ class HeightmapGenerator:
         self, height: Union[int, str], range_x: str, range_y: str
     ) -> None:
         """Add a single hill using blob spreading."""
-        change = np.zeros(self.n_cells, dtype=np.float32)
+        # Use uint8 to match FMG's Uint8Array behavior
+        # This provides automatic truncation that limits blob spreading
+        change = np.zeros(self.n_cells, dtype=np.uint8)
         h = self._lim(self._get_number_in_range(height))
 
         # Parse range constraints for blob spreading
@@ -223,7 +221,9 @@ class HeightmapGenerator:
                 )
 
                 if new_height > 1:
-                    change[neighbor] = new_height
+                    # Convert to int to match Uint8Array truncation behavior
+                    # This is critical for limiting blob spread distance
+                    change[neighbor] = int(new_height)
                     queue.append(neighbor)
 
         # Apply changes
@@ -268,7 +268,8 @@ class HeightmapGenerator:
 
         # Spread depth using BFS
         queue = [start]
-
+        used[start] = True  # Mark start as used
+        
         while queue:
             current = queue.pop(0)
             h = (h**self.blob_power) * (self._random() * 0.2 + 0.9)
@@ -277,13 +278,17 @@ class HeightmapGenerator:
                 break
 
             for neighbor in self.graph.cell_neighbors[current]:
-                if not used[neighbor]:
-                    depth_factor = h * (self._random() * 0.2 + 0.9)
-                    self.heights[neighbor] = self._lim(
-                        self.heights[neighbor] - depth_factor
-                    )
-                    used[neighbor] = True
-                    queue.append(neighbor)
+                # CRITICAL FIX: Check if used and SKIP (continue) if already processed
+                if used[neighbor]:
+                    continue  # Skip cells that have already been processed
+                    
+                # Process this cell ONCE
+                depth_factor = h * (self._random() * 0.2 + 0.9)
+                self.heights[neighbor] = self._lim(
+                    self.heights[neighbor] - depth_factor
+                )
+                used[neighbor] = True
+                queue.append(neighbor)
 
     def add_range(
         self,

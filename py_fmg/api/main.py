@@ -11,9 +11,9 @@ from datetime import datetime
 from ..config import settings
 from ..db.connection import db
 from ..db.models import GenerationJob, Map
-from ..core.voronoi_graph import GridConfig, generate_voronoi_graph, pack_graph
+from ..core.voronoi_graph import GridConfig, generate_voronoi_graph
 from ..core.heightmap_generator import HeightmapGenerator, HeightmapConfig
-from ..core.regraph import regraph
+from ..core.cell_packing import regraph
 
 # Configure logging
 structlog.configure(

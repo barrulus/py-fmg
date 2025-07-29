@@ -12,7 +12,6 @@ by removing deep ocean while enhancing coastal detail.
 
 import numpy as np
 from scipy.spatial import Voronoi
-from typing import List, Tuple, Optional
 from dataclasses import dataclass
 import structlog
 
@@ -31,60 +30,12 @@ class CellType:
     DEEP_OCEAN = -3     # Deep ocean (to be excluded)
 
 
-def determine_cell_types(graph: VoronoiGraph) -> np.ndarray:
-    """
-    Determine cell types based on heights and neighbor relationships.
-    
-    This matches FMG's cell type classification used in reGraph.
-    
-    Args:
-        graph: VoronoiGraph with heights already calculated
-        
-    Returns:
-        Array of cell types matching CellType constants
-    """
-    n_cells = len(graph.points)
-    cell_types = np.zeros(n_cells, dtype=np.int8)
-    
-    for i in range(n_cells):
-        height = graph.heights[i]
-        is_water = height < 20
-        
-        # Check neighbors
-        has_water_neighbor = False
-        has_land_neighbor = False
-        
-        for neighbor_idx in graph.cell_neighbors[i]:
-            if neighbor_idx < len(graph.heights):  # Boundary check
-                if graph.heights[neighbor_idx] < 20:
-                    has_water_neighbor = True
-                else:
-                    has_land_neighbor = True
-                
-        # Classify cell
-        if is_water:
-            if has_land_neighbor:
-                cell_types[i] = CellType.WATER_COAST
-            else:
-                cell_types[i] = CellType.DEEP_OCEAN
-        else:
-            if has_water_neighbor:
-                cell_types[i] = CellType.LAND_COAST
-            else:
-                cell_types[i] = CellType.INLAND
-    
-    # TODO: Proper lake detection would require feature analysis
-    # For now, some isolated water cells could be marked as lakes
-    
-    return cell_types
-
-
 def regraph(graph: VoronoiGraph) -> VoronoiGraph:
     """
     Perform FMG's reGraph operation to create a packed cell structure.
     
     This function:
-    1. Determines cell types (coast, inland, ocean)
+    1. Uses cell types from Features.markup_grid (via graph.distance_field)
     2. Filters out deep ocean cells
     3. Adds intermediate points along coastlines
     4. Creates a new Voronoi diagram from the filtered points
@@ -93,15 +44,19 @@ def regraph(graph: VoronoiGraph) -> VoronoiGraph:
     coastal detail - a critical optimization for browser performance.
     
     Args:
-        graph: Original VoronoiGraph with heights calculated
+        graph: Original VoronoiGraph with heights calculated and 
+               distance_field populated by Features.markup_grid()
         
     Returns:
         New packed VoronoiGraph with fewer cells and enhanced coastlines
     """
     logger.info("Starting reGraph operation", original_cells=len(graph.points))
     
-    # Determine cell types
-    cell_types = determine_cell_types(graph)
+    # Use the distance_field populated by Features.markup_grid()
+    if not hasattr(graph, 'distance_field'):
+        raise ValueError("graph.distance_field not found. Call Features.markup_grid() first!")
+    
+    cell_types = graph.distance_field
     
     # Collect new points
     new_points = []
@@ -115,14 +70,15 @@ def regraph(graph: VoronoiGraph) -> VoronoiGraph:
         cell_type = cell_types[i]
         height = graph.heights[i]
         
-        # CRITICAL: Exclude all deep ocean points
-        if height < 20 and cell_type not in [CellType.WATER_COAST, CellType.LAKE]:
-            continue
+        # CRITICAL: Match FMG's exact exclusion logic
+        # if (height < 20 && type !== -1 && type !== -2) continue;
+        if height < 20 and cell_type != -1 and cell_type != -2:
+            continue  # exclude all deep ocean points
             
-        # Exclude non-coastal lake points (matching FMG's i % 4 === 0 logic)
-        # This reduces lake cell density
-        if cell_type == CellType.LAKE and i % 4 == 0:
-            continue
+        # if (type === -2 && (i % 4 === 0 || features[gridCells.f[i]].type === "lake")) continue;
+        # For now, we'll just check i % 4 since we don't have lake feature detection yet
+        if cell_type == -2 and i % 4 == 0:
+            continue  # exclude non-coastal lake points
         
         # Add the main point
         x, y = graph.points[i]
@@ -131,29 +87,31 @@ def regraph(graph: VoronoiGraph) -> VoronoiGraph:
         new_grid_indices.append(i)
         
         # Add additional points for cells along coast
-        if cell_type in [CellType.LAND_COAST, CellType.WATER_COAST]:
+        # LAND_COAST = 1, WATER_COAST = -1
+        if cell_type == 1 or cell_type == -1:
             # Skip border cells to avoid edge artifacts
             if graph.cell_border_flags[i]:
                 continue
                 
             # Add intermediate points between same-type coastal neighbors
-            for neighbor_idx in graph.cell_neighbors[i]:
-                # Avoid duplicates - only process once per pair
+            # FMG uses forEach on neighbors, checking each one
+            for j, neighbor_idx in enumerate(graph.cell_neighbors[i]):
+                # FMG: if (i > e) return; - only process once per pair
                 if i > neighbor_idx:
                     continue
                     
                 neighbor_type = cell_types[neighbor_idx]
                 
-                # Only add points between same-type coastal cells
+                # FMG: if (gridCells.t[e] === type)
                 if neighbor_type == cell_type:
                     nx, ny = graph.points[neighbor_idx]
                     
-                    # Check distance
+                    # Check distance - FMG: const dist2 = (y - points[e][1]) ** 2 + (x - points[e][0]) ** 2;
                     dist_squared = (y - ny) ** 2 + (x - nx) ** 2
                     if dist_squared < spacing_squared:
                         continue  # Too close
                     
-                    # Add intermediate point
+                    # Add intermediate point - FMG uses rn() for rounding
                     x1 = round((x + nx) / 2, 1)
                     y1 = round((y + ny) / 2, 1)
                     
@@ -222,46 +180,3 @@ def regraph(graph: VoronoiGraph) -> VoronoiGraph:
     
     return packed
 
-
-def pack_graph_simple(graph: VoronoiGraph, deep_ocean_threshold: int = 20) -> VoronoiGraph:
-    """
-    Simple graph packing that just removes deep ocean cells.
-    
-    This is a simpler alternative to full reGraph when coastal
-    enhancement is not needed.
-    
-    Args:
-        graph: Original VoronoiGraph
-        deep_ocean_threshold: Height threshold for removal
-        
-    Returns:
-        Packed VoronoiGraph with deep ocean removed
-    """
-    # This is the original pack_graph implementation
-    # Kept for backwards compatibility and simpler use cases
-    
-    keep_mask = graph.heights >= deep_ocean_threshold
-    keep_indices = np.where(keep_mask)[0]
-    n_packed = len(keep_indices)
-    
-    # Create mapping
-    old_to_new = np.full(len(graph.points), -1, dtype=int)
-    old_to_new[keep_indices] = np.arange(n_packed)
-    
-    # Pack arrays
-    packed_points = graph.points[keep_indices]
-    packed_heights = graph.heights[keep_indices]
-    
-    # Pack connectivity
-    packed_neighbors = []
-    for old_idx in keep_indices:
-        new_neighbors = []
-        for neighbor_idx in graph.cell_neighbors[old_idx]:
-            if keep_mask[neighbor_idx]:
-                new_neighbors.append(old_to_new[neighbor_idx])
-        packed_neighbors.append(new_neighbors)
-    
-    # ... rest of simple packing logic ...
-    # (omitted for brevity - same as original pack_graph)
-    
-    return graph  # Placeholder
