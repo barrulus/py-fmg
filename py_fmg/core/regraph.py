@@ -1,8 +1,11 @@
 """
-Coastal resampling and reGraph functionality for FMG compatibility.
+DEPRECATED: This is an older partial implementation of reGraph.
 
-This module implements FMG's reGraph function which performs coastal resampling
-by adding intermediate points along coastlines before a second Voronoi pass.
+The complete, working implementation is now in cell_packing.py.
+This file is kept for reference only.
+
+For the current implementation, use:
+    from py_fmg.core import regraph  # imports from cell_packing.py
 """
 
 import numpy as np

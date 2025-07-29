@@ -4,7 +4,8 @@ import pytest
 import numpy as np
 from py_fmg.core.voronoi_graph import (
     GridConfig, generate_voronoi_graph, get_jittered_grid, 
-    get_boundary_points, find_grid_cell
+    get_boundary_points, find_grid_cell, generate_or_reuse_grid,
+    relax_points, VoronoiGraph
 )
 
 
@@ -92,6 +93,12 @@ class TestVoronoiGraph:
         assert len(graph.cell_neighbors) == len(graph.points)
         assert len(graph.cell_vertices) == len(graph.points)
         assert len(graph.cell_border_flags) == len(graph.points)
+        # Test new features
+        assert len(graph.heights) == len(graph.points)
+        assert np.all(graph.heights == 0)  # Heights should be pre-allocated as zeros
+        assert graph.graph_width == 100
+        assert graph.graph_height == 100
+        assert graph.seed == "test_seed"
     
     def test_connectivity_integrity(self):
         """Test that cell connectivity is symmetric."""
@@ -133,6 +140,50 @@ class TestVoronoiGraph:
         np.testing.assert_array_equal(graph1.points, graph2.points)
         assert graph1.cell_neighbors == graph2.cell_neighbors
         np.testing.assert_array_equal(graph1.cell_border_flags, graph2.cell_border_flags)
+    
+    def test_height_preallocation(self):
+        """Test that heights are pre-allocated."""
+        config = GridConfig(width=50, height=50, cells_desired=25)
+        graph = generate_voronoi_graph(config, "test_seed")
+        
+        assert hasattr(graph, 'heights')
+        assert len(graph.heights) == len(graph.points)
+        assert graph.heights.dtype == np.uint8
+        assert np.all(graph.heights == 0)
+    
+    def test_grid_reuse(self):
+        """Test grid reuse logic."""
+        config = GridConfig(width=50, height=50, cells_desired=25)
+        
+        # Generate initial grid
+        graph1 = generate_voronoi_graph(config, "test_seed")
+        
+        # Should reuse with same parameters
+        graph2 = generate_or_reuse_grid(graph1, config, "test_seed")
+        assert graph2 is graph1  # Same object
+        
+        # Should regenerate with different seed
+        graph3 = generate_or_reuse_grid(graph1, config, "different_seed")
+        assert graph3 is not graph1
+        assert graph3.seed == "different_seed"
+        
+        # Should regenerate with different size
+        config2 = GridConfig(width=100, height=100, cells_desired=25)
+        graph4 = generate_or_reuse_grid(graph1, config2, "test_seed")
+        assert graph4 is not graph1
+    
+    def test_lloyd_relaxation(self):
+        """Test Lloyd's relaxation algorithm."""
+        # Generate unrelaxed points
+        config = GridConfig(width=50, height=50, cells_desired=25)
+        graph_unrelaxed = generate_voronoi_graph(config, "test_seed", apply_relaxation=False)
+        graph_relaxed = generate_voronoi_graph(config, "test_seed", apply_relaxation=True)
+        
+        # Points should be different due to relaxation
+        assert not np.array_equal(graph_unrelaxed.points, graph_relaxed.points)
+        
+        # But count should be the same
+        assert len(graph_unrelaxed.points) == len(graph_relaxed.points)
 
 
 class TestGridCellFinder:
@@ -181,3 +232,35 @@ def test_various_grid_sizes(width, height, cells):
     # Test that spacing is reasonable
     expected_spacing = np.sqrt((width * height) / cells)
     assert abs(graph.spacing - expected_spacing) < 1.0
+
+
+class TestRelaxation:
+    """Test Lloyd's relaxation algorithm."""
+    
+    def test_relaxation_bounds(self):
+        """Test that relaxed points stay within bounds."""
+        width, height = 100, 100
+        spacing = 10
+        
+        points = get_jittered_grid(width, height, spacing, "test")
+        boundary = get_boundary_points(width, height, spacing)
+        
+        relaxed = relax_points(points, boundary, width, height, n_iterations=3)
+        
+        # All points should still be within bounds
+        assert np.all(relaxed[:, 0] >= 0)
+        assert np.all(relaxed[:, 0] <= width)
+        assert np.all(relaxed[:, 1] >= 0)
+        assert np.all(relaxed[:, 1] <= height)
+    
+    def test_relaxation_count(self):
+        """Test that relaxation preserves point count."""
+        width, height = 50, 50
+        spacing = 5
+        
+        points = get_jittered_grid(width, height, spacing, "test")
+        boundary = get_boundary_points(width, height, spacing)
+        
+        relaxed = relax_points(points, boundary, width, height, n_iterations=2)
+        
+        assert len(relaxed) == len(points)

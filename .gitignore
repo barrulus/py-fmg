@@ -1,4 +1,7 @@
 .env
+.pytest_cache/
 venv/
 __pycache__/
 fmg/
+debug_archive/
+debug/

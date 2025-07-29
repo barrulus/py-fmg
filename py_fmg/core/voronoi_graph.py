@@ -2,7 +2,8 @@
 
 import numpy as np
 from scipy.spatial import Voronoi
-from typing import Dict, List, Tuple, NamedTuple
+from typing import Dict, List, Tuple, NamedTuple, Optional
+from dataclasses import dataclass, field
 import structlog
 from .alea_prng import AleaPRNG
 
@@ -16,23 +17,57 @@ class GridConfig(NamedTuple):
     cells_desired: int
 
 
-class VoronoiGraph(NamedTuple):
-    """Voronoi graph data structure matching FMG format."""
+@dataclass
+class VoronoiGraph:
+    """Voronoi graph data structure matching FMG format.
+    
+    This is now a mutable dataclass to support FMG's stateful operations,
+    including height pre-allocation and grid reuse.
+    """
+    # Grid parameters
     spacing: float
     cells_desired: int
+    graph_width: float  # Original generation width
+    graph_height: float  # Original generation height
+    seed: str
+    
+    # Points data
     boundary_points: np.ndarray
     points: np.ndarray
     cells_x: int
     cells_y: int
+    
     # Cell connectivity data
     cell_neighbors: List[List[int]]  # cells.c[i] = list of neighbor cell IDs
     cell_vertices: List[List[int]]   # cells.v[i] = list of vertex IDs for cell boundary
     cell_border_flags: np.ndarray    # cells.b[i] = 1 if border cell, 0 otherwise
+    heights: np.ndarray              # cells.h[i] = height value (PRE-ALLOCATED!)
+    
     # Vertex data
     vertex_coordinates: np.ndarray   # vertices.p[i] = [x, y] coordinates
     vertex_neighbors: List[List[int]] # vertices.v[i] = list of adjacent vertex IDs
     vertex_cells: List[List[int]]    # vertices.c[i] = list of adjacent cell IDs
-    seed: str
+    
+    # Optional: Mapping from packed cells to original grid (set by regraph)
+    grid_indices: Optional[np.ndarray] = field(default=None)
+    
+    # Feature fields (populated by features module)
+    distance_field: Optional[np.ndarray] = field(default=None)  # cells.t - distance to coast
+    feature_ids: Optional[np.ndarray] = field(default=None)     # cells.f - feature ID for each cell
+    features: Optional[List] = field(default=None)              # array of feature objects
+    border_cells: Optional[np.ndarray] = field(default=None)    # cells.b - border cell flags
+    
+    def should_regenerate(self, config: GridConfig, seed: str) -> bool:
+        """Check if grid needs to be regenerated based on new parameters.
+        
+        Equivalent to FMG's shouldRegenerateGrid() function.
+        """
+        same_size = (self.graph_width == config.width and 
+                    self.graph_height == config.height)
+        same_cells = self.cells_desired == config.cells_desired
+        same_seed = self.seed == seed
+        
+        return not (same_size and same_cells and same_seed)
 
 
 def get_jittered_grid(width: float, height: float, spacing: float, seed: str = None) -> np.ndarray:
@@ -249,15 +284,134 @@ def build_vertex_connectivity(vor: Voronoi, n_grid_points: int) -> Tuple[List[Li
     return vertex_neighbors, vertex_cells
 
 
-def generate_voronoi_graph(config: GridConfig, seed: str = None) -> VoronoiGraph:
+def compute_polygon_centroid(vertices: np.ndarray) -> np.ndarray:
+    """Compute the centroid of a polygon.
+    
+    Args:
+        vertices: Array of [x, y] vertex coordinates
+        
+    Returns:
+        [x, y] centroid coordinates
+    """
+    if len(vertices) < 3:
+        return np.mean(vertices, axis=0)
+    
+    # Calculate area and centroid using shoelace formula
+    n = len(vertices)
+    area = 0.0
+    cx = 0.0
+    cy = 0.0
+    
+    for i in range(n):
+        j = (i + 1) % n
+        a = vertices[i][0] * vertices[j][1] - vertices[j][0] * vertices[i][1]
+        area += a
+        cx += (vertices[i][0] + vertices[j][0]) * a
+        cy += (vertices[i][1] + vertices[j][1]) * a
+    
+    if abs(area) < 1e-10:
+        return np.mean(vertices, axis=0)
+    
+    area *= 0.5
+    cx /= (6.0 * area)
+    cy /= (6.0 * area)
+    
+    return np.array([cx, cy])
+
+
+def relax_points(points: np.ndarray, boundary_points: np.ndarray, 
+                 width: float, height: float, n_iterations: int = 3) -> np.ndarray:
+    """Apply Lloyd's relaxation to improve point distribution.
+    
+    Equivalent to FMG's relaxPlaced() function.
+    Moves each point to the centroid of its Voronoi cell.
+    
+    Args:
+        points: Grid points to relax
+        boundary_points: Boundary points (fixed)
+        width: Map width
+        height: Map height  
+        n_iterations: Number of relaxation iterations
+        
+    Returns:
+        Relaxed point coordinates
+    """
+    logger.info("Starting Lloyd's relaxation", iterations=n_iterations)
+    
+    points = points.copy()  # Don't modify original
+    n_points = len(points)
+    
+    for iteration in range(n_iterations):
+        all_points = np.vstack([points, boundary_points])
+        vor = Voronoi(all_points)
+        
+        # Move each point to its cell's centroid
+        for i in range(n_points):
+            # Get vertices of this cell's polygon
+            region_idx = vor.point_region[i]
+            if region_idx == -1:
+                continue
+                
+            region_vertices = vor.regions[region_idx]
+            if -1 in region_vertices or len(region_vertices) < 3:
+                continue
+            
+            # Get vertex coordinates
+            vertices = vor.vertices[region_vertices]
+            
+            # Compute centroid and update point
+            centroid = compute_polygon_centroid(vertices)
+            
+            # Clamp to map bounds
+            points[i][0] = np.clip(centroid[0], 0, width)
+            points[i][1] = np.clip(centroid[1], 0, height)
+        
+        logger.info(f"Relaxation iteration {iteration + 1} complete")
+    
+    return points
+
+
+def generate_or_reuse_grid(existing_grid: Optional[VoronoiGraph], 
+                          config: GridConfig, seed: str = None,
+                          apply_relaxation: bool = True) -> VoronoiGraph:
+    """
+    Generate new grid or reuse existing one based on parameters.
+    
+    Equivalent to FMG's logic in applyGraphSize() and generateGrid().
+    Allows keeping landmasses while changing terrain features.
+    
+    Args:
+        existing_grid: Previously generated grid (can be None)
+        config: Grid configuration
+        seed: Random seed
+        apply_relaxation: Whether to apply Lloyd's relaxation
+        
+    Returns:
+        VoronoiGraph - either new or reused
+    """
+    # Check if we should regenerate
+    if existing_grid is None or existing_grid.should_regenerate(config, seed):
+        logger.info("Generating new grid")
+        return generate_voronoi_graph(config, seed, apply_relaxation)
+    else:
+        logger.info("Reusing existing grid", 
+                   seed=existing_grid.seed,
+                   cells=len(existing_grid.points))
+        return existing_grid
+
+
+def generate_voronoi_graph(config: GridConfig, seed: str = None, 
+                          apply_relaxation: bool = True) -> VoronoiGraph:
     """
     Generate complete Voronoi graph matching FMG structure.
     
     This is the main function that replaces FMG's generateGrid() function.
+    Now includes Lloyd's relaxation and height pre-allocation.
     
     Args:
         config: Grid configuration
         seed: Random seed for reproducibility
+        apply_relaxation: Whether to apply Lloyd's relaxation
         
     Returns:
         Complete Voronoi graph data structure
@@ -279,11 +433,18 @@ def generate_voronoi_graph(config: GridConfig, seed: str = None) -> VoronoiGraph
     # Generate points
     grid_points = get_jittered_grid(config.width, config.height, spacing, seed)
     boundary_points = get_boundary_points(config.width, config.height, spacing)
+    
+    # Apply Lloyd's relaxation if requested
+    if apply_relaxation:
+        grid_points = relax_points(grid_points, boundary_points, 
+                                  config.width, config.height, n_iterations=3)
+    
     all_points = np.vstack([grid_points, boundary_points])
     
     logger.info("Points generated", 
                 grid_points=len(grid_points), 
-                boundary_points=len(boundary_points))
+                boundary_points=len(boundary_points),
+                relaxation_applied=apply_relaxation)
     
     # Calculate Voronoi diagram
     vor = Voronoi(all_points)
@@ -300,9 +461,16 @@ def generate_voronoi_graph(config: GridConfig, seed: str = None) -> VoronoiGraph
     vertex_neighbors, vertex_cells = build_vertex_connectivity(vor, len(grid_points))
     logger.info("All connectivity built")
     
+    # PRE-ALLOCATE HEIGHTS ARRAY - Critical for FMG compatibility!
+    heights = np.zeros(len(grid_points), dtype=np.uint8)
+    logger.info("Heights array pre-allocated")
+    
     return VoronoiGraph(
         spacing=spacing,
         cells_desired=config.cells_desired,
+        graph_width=config.width,
+        graph_height=config.height,
+        seed=seed or "default",
         boundary_points=boundary_points,
         points=grid_points,
         cells_x=cells_x,
@@ -310,10 +478,10 @@ def generate_voronoi_graph(config: GridConfig, seed: str = None) -> VoronoiGraph
         cell_neighbors=cell_neighbors,
         cell_vertices=cell_vertices,
         cell_border_flags=border_flags,
+        heights=heights,
         vertex_coordinates=vor.vertices,
         vertex_neighbors=vertex_neighbors,
-        vertex_cells=vertex_cells,
-        seed=seed or "default"
+        vertex_cells=vertex_cells
     )
 
 
@@ -342,98 +510,7 @@ def find_grid_cell(x: float, y: float, graph: VoronoiGraph) -> int:
     return min(max(cell_idx, 0), len(graph.points) - 1)
 
 
-def pack_graph(graph: VoronoiGraph, heights: np.ndarray, deep_ocean_threshold: int = 20) -> VoronoiGraph:
-    """
-    Pack the Voronoi graph by removing deep ocean cells.
-    
-    This function replicates FMG's reGraph() functionality which optimizes the graph
-    by removing deep ocean cells (typically height < 20) to reduce memory usage
-    and improve performance for subsequent processing stages.
-    
-    Args:
-        graph: Original Voronoi graph
-        heights: Height values for each cell
-        deep_ocean_threshold: Cells with height below this value are removed
-        
-    Returns:
-        New packed VoronoiGraph with reduced cell count
-    """
-    logger.info("Packing graph", 
-                original_cells=len(graph.points), 
-                threshold=deep_ocean_threshold)
-    
-    # Find cells to keep (above threshold)
-    keep_mask = heights >= deep_ocean_threshold
-    keep_indices = np.where(keep_mask)[0]
-    n_packed = len(keep_indices)
-    
-    logger.info("Cells to pack", kept=n_packed, removed=len(graph.points) - n_packed)
-    
-    # Create old_to_new index mapping
-    old_to_new = np.full(len(graph.points), -1, dtype=int)
-    old_to_new[keep_indices] = np.arange(n_packed)
-    
-    # Pack points array
-    packed_points = graph.points[keep_indices]
-    
-    # Pack cell connectivity - only keep neighbors that are also kept
-    packed_neighbors = []
-    for old_idx in keep_indices:
-        old_neighbors = graph.cell_neighbors[old_idx]
-        new_neighbors = []
-        for neighbor_idx in old_neighbors:
-            if keep_mask[neighbor_idx]:  # Neighbor is kept
-                new_neighbors.append(old_to_new[neighbor_idx])
-        packed_neighbors.append(new_neighbors)
-    
-    # Pack cell vertices - need to rebuild vertex system
-    # For simplicity, we'll keep all vertices but update cell references
-    packed_vertices = []
-    for old_idx in keep_indices:
-        packed_vertices.append(graph.cell_vertices[old_idx])
-    
-    # Pack border flags
-    packed_border_flags = graph.cell_border_flags[keep_indices]
-    
-    # Update vertex connectivity to reference packed cells
-    packed_vertex_neighbors = []
-    packed_vertex_cells = []
-    
-    for v_idx in range(len(graph.vertex_neighbors)):
-        # Keep vertex neighbors as-is (vertex indices don't change)
-        packed_vertex_neighbors.append(graph.vertex_neighbors[v_idx])
-        
-        # Update vertex cells to only reference packed cells
-        old_cells = graph.vertex_cells[v_idx]
-        new_cells = []
-        for cell_idx in old_cells:
-            if keep_mask[cell_idx]:
-                new_cells.append(old_to_new[cell_idx])
-        packed_vertex_cells.append(new_cells)
-    
-    # Calculate new approximate grid dimensions for the packed cells
-    packed_width = np.max(packed_points[:, 0]) - np.min(packed_points[:, 0])
-    packed_height = np.max(packed_points[:, 1]) - np.min(packed_points[:, 1])
-    packed_cells_x = int(packed_width / graph.spacing) + 1
-    packed_cells_y = int(packed_height / graph.spacing) + 1
-    
-    logger.info("Graph packing complete", 
-                packed_cells=n_packed,
-                original_cells=len(graph.points),
-                reduction_pct=round((1 - n_packed/len(graph.points)) * 100, 1))
-    
-    return VoronoiGraph(
-        spacing=graph.spacing,
-        cells_desired=n_packed,  # Update to reflect new reality
-        boundary_points=graph.boundary_points,  # Keep boundary unchanged
-        points=packed_points,
-        cells_x=packed_cells_x,
-        cells_y=packed_cells_y,
-        cell_neighbors=packed_neighbors,
-        cell_vertices=packed_vertices,
-        cell_border_flags=packed_border_flags,
-        vertex_coordinates=graph.vertex_coordinates,  # Keep all vertices
-        vertex_neighbors=packed_vertex_neighbors,
-        vertex_cells=packed_vertex_cells,
-        seed=graph.seed + "_packed"  # Indicate this is packed version
-    )
+# Note: pack_graph has been moved to cell_packing.py as pack_graph_simple
+# The proper implementation is now regraph() which matches FMG's behavior
+# Import it when needed:
+# from .cell_packing import regraph, pack_graph_simple
