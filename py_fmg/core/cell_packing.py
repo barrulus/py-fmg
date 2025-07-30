@@ -53,7 +53,7 @@ def regraph(graph: VoronoiGraph) -> VoronoiGraph:
     logger.info("Starting reGraph operation", original_cells=len(graph.points))
     
     # Use the distance_field populated by Features.markup_grid()
-    if not hasattr(graph, 'distance_field'):
+    if graph.distance_field is None:
         raise ValueError("graph.distance_field not found. Call Features.markup_grid() first!")
     
     cell_types = graph.distance_field

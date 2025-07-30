@@ -14,6 +14,7 @@ from ..db.models import GenerationJob, Map
 from ..core.voronoi_graph import GridConfig, generate_voronoi_graph
 from ..core.heightmap_generator import HeightmapGenerator, HeightmapConfig
 from ..core.cell_packing import regraph
+from ..core.features import Features
 
 # Configure logging
 structlog.configure(
@@ -304,15 +305,29 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest):
         heightmap_gen = HeightmapGenerator(heightmap_config, voronoi_graph)
         heights = heightmap_gen.from_template(request.template_name, map_seed)
         
+        # Assign heights to the graph
+        voronoi_graph.heights = heights
+        
         # Update progress
         with db.get_session() as session:
             job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
             job.progress_percent = 30
             session.commit()
         
-        # Stage 3: Perform reGraph coastal resampling (35% progress)
+        # Stage 3: Mark up coastlines with Features (32% progress)
+        logger.info("Marking up coastlines", job_id=job_id)
+        features = Features(voronoi_graph)
+        features.markup_grid()
+        
+        # Update progress
+        with db.get_session() as session:
+            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job.progress_percent = 32
+            session.commit()
+        
+        # Stage 4: Perform reGraph coastal resampling (35% progress)
         logger.info("Performing reGraph coastal resampling", job_id=job_id)
-        regraph_result = regraph(voronoi_graph, heights, config, grid_seed)
+        packed_graph = regraph(voronoi_graph)
         
         # Update progress
         with db.get_session() as session:
@@ -320,11 +335,10 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest):
             job.progress_percent = 35
             session.commit()
         
-        # Stage 4: Pack the reGraphed data (40% progress)
+        # Stage 5: Pack the reGraphed data (40% progress)
         logger.info("Packing reGraphed data", job_id=job_id)
-        # The reGraph result already contains the new Voronoi graph and heights
-        packed_graph = regraph_result.voronoi_graph
-        packed_heights = regraph_result.heights
+        # The packed_graph already contains the new Voronoi graph and heights
+        packed_heights = packed_graph.heights
         
         # Update progress
         with db.get_session() as session:
