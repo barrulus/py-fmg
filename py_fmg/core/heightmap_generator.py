@@ -76,25 +76,24 @@ class HeightmapGenerator:
         return blob_power_map.get(cells, 0.98)
 
     def _get_line_power(self, cells: int) -> float:
-        """
-        Calculate line power factor - replicates FMG's getLinePower() bug.
-
-        FMG's getLinePower() function has a bug where it references an undefined 'cells' variable
-        in the local scope (not the parameter). In JavaScript, linePowerMap[undefined] returns
-        undefined, and the || operator then returns the default value of 0.81.
-
-        For exact FMG compatibility, we replicate this bug behavior by always returning 0.81.
-
-        The correct implementation would be:
+        """Get line spreading power factor based on cell count."""
         line_power_map = {
-            1000: 0.75, 2000: 0.78, 5000: 0.8, 10000: 0.81,
-            20000: 0.82, 30000: 0.83, 40000: 0.84, 50000: 0.85,
-            60000: 0.855, 70000: 0.86, 80000: 0.865, 90000: 0.87, 100000: 0.871
+            1000: 0.75,
+            2000: 0.77,
+            5000: 0.79,
+            10000: 0.81,
+            20000: 0.82,
+            30000: 0.83,
+            40000: 0.84,
+            50000: 0.86,
+            60000: 0.87,
+            70000: 0.88,
+            80000: 0.91,
+            90000: 0.92,
+            100000: 0.93,
         }
-        return next((v for k, v in sorted(line_power_map.items()) if cells <= k), 0.81)
-        """
-        # FMG bug: linePowerMap[undefined] || 0.81 always returns 0.81
-        return 0.81
+        # Replicate JS behavior: exact key match or default
+        return line_power_map.get(cells, 0.81)
 
     def _lim(self, value: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
         """Limit values to 0-100 range."""
@@ -107,29 +106,71 @@ class HeightmapGenerator:
             self._prng = get_prng()
         return self._prng.random()
 
+    def _rand(
+        self, min_val: Optional[float] = None, max_val: Optional[float] = None
+    ) -> int:
+        """Match FMG's rand() function - returns integer in range [min, max] inclusive."""
+        if min_val is None and max_val is None:
+            return int(self._random() * 2**32)  # Return large random int
+        if max_val is None:
+            max_val = min_val
+            min_val = 0
+        return int(self._random() * (max_val - min_val + 1)) + int(min_val)
+
+    def _P(self, probability: float) -> bool:
+        """Match FMG's P() probability function."""
+        if probability >= 1:
+            return True
+        if probability <= 0:
+            return False
+        return self._random() < probability
+
     def _get_number_in_range(self, value: Union[int, float, str]) -> float:
         """Parse number range string and return a random value within it."""
-        if isinstance(value, (int, float)):
-            return float(value)
+        # Convert to string to handle consistently
+        r = str(value)
 
-        if "-" in str(value):
-            min_val, max_val = map(float, str(value).split("-"))
-            # Match JavaScript's rand() which returns integers
-            return float(int(min_val + self._random() * (max_val - min_val + 1)))
+        # Check if it's a simple number (not a range)
+        try:
+            num = float(r)
+            # Match FMG: return ~~r + +P(r - ~~r)
+            # ~~ is floor, so integer part + probability of fractional part
+            integer_part = int(num)
+            fractional_part = num - integer_part
+            if fractional_part > 0 and self._P(fractional_part):
+                return float(integer_part + 1)
+            return float(integer_part)
+        except ValueError:
+            pass
 
-        return float(value)
+        # Handle ranges like "5-10"
+        if "-" in r:
+            # Handle negative sign at start
+            sign = 1
+            if r[0] == "-":
+                sign = -1
+                r = r[1:]
+
+            if "-" in r:
+                parts = r.split("-")
+                min_val = float(parts[0]) * sign
+                max_val = float(parts[1])
+                return float(self._rand(min_val, max_val))
+
+        # Fallback
+        return 0.0
 
     def _get_point_in_range(self, range_str: str, max_val: float) -> float:
         """Get a random point within the specified range."""
         if "-" in range_str:
-            min_pct, max_pct = map(float, range_str.split("-"))
-            min_val = max_val * min_pct / 100
-            max_val_range = max_val * max_pct / 100
-            # Match JavaScript's rand() which returns integers
-            return float(int(min_val + self._random() * (max_val_range - min_val + 1)))
+            parts = range_str.split("-")
+            min_pct = float(parts[0]) / 100 if parts[0] else 0
+            max_pct = float(parts[1]) / 100 if parts[1] else min_pct
+            # Use _rand to match FMG's getPointInRange exactly
+            return float(self._rand(min_pct * max_val, max_pct * max_val))
 
-        pct = float(range_str)
-        return max_val * pct / 100
+        pct = float(range_str) / 100
+        return max_val * pct
 
     def _parse_range_bounds(
         self, range_str: str, max_val: float
@@ -181,52 +222,63 @@ class HeightmapGenerator:
     def _add_one_hill(
         self, height: Union[int, str], range_x: str, range_y: str
     ) -> None:
-        """Add a single hill using blob spreading."""
-        # Use uint8 to match FMG's Uint8Array behavior
-        # This provides automatic truncation that limits blob spreading
+        """
+        Add a single hill using blob spreading.
+        This version corrects the NameError and implements the FMG queueing logic.
+        """
+        # 1. INITIAL SETUP
         change = np.zeros(self.n_cells, dtype=np.uint8)
         h = self._lim(self._get_number_in_range(height))
 
-        # Parse range constraints for blob spreading
-        x_min, x_max = self._parse_range_bounds(range_x, self.config.width)
-        y_min, y_max = self._parse_range_bounds(range_y, self.config.height)
-
-        # Find starting point
+        # 2. FIND STARTING POINT
         limit = 0
+        start = -1  # Initialize `start` to a known invalid value BEFORE the loop
         while limit < 50:
             x = self._get_point_in_range(range_x, self.config.width)
             y = self._get_point_in_range(range_y, self.config.height)
-            start = self._find_grid_cell(x, y)
 
-            if self.heights[start] + h <= 90:
-                break
+            # Define `start` inside the loop for each attempt
+            current_attempt_start = self._find_grid_cell(x, y)
+
+            if self.heights[current_attempt_start] + h <= 90:
+                start = current_attempt_start  # Assign to the outer `start` variable
+                break  # Exit the loop successfully
+
             limit += 1
 
-        # Spread height using BFS - NO range constraints during spreading (matches FMG)
-        change[start] = h
+        # 3. ROBUSTNESS CHECK: If the loop finished without finding a start, exit.
+        if start == -1:
+            # This print statement is useful for debugging template issues.
+            # print("WARNING: Could not find a valid start point for hill. Skipping.")
+            return
+
+        # 4. INITIALIZE BFS
+        change[start] = int(h)
         queue = [start]
 
+        # 5. CORE BFS LOOP
         while queue:
             current = queue.pop(0)
+            val_from_array = change[current]
 
-            # Spread to neighbors without range constraints (like FMG)
             for neighbor in self.graph.cell_neighbors[current]:
-                # CRITICAL: Check if cell already has a change value (like FMG)
                 if change[neighbor] > 0:
-                    continue  # Skip cells that already have height changes
+                    continue
 
-                # Calculate new height with power decay and randomness
-                new_height = (change[current] ** self.blob_power) * (
+                # Calculate the float value
+                new_height_float = (val_from_array**self.blob_power) * (
                     self._random() * 0.2 + 0.9
                 )
 
-                if new_height > 1:
-                    # Convert to int to match Uint8Array truncation behavior
-                    # This is critical for limiting blob spread distance
-                    change[neighbor] = int(new_height)
+                # Assign it to the uint8 array, letting NumPy handle the truncation.
+                change[neighbor] = new_height_float
+
+                # CRITICAL FIX: Check the STORED, TRUNCATED integer value.
+                if change[neighbor] > 1:
+                    # If the stored integer is > 1, the spread continues.
                     queue.append(neighbor)
 
-        # Apply changes
+        # 6. APPLY CHANGES
         self.heights = self._lim(self.heights + change)
 
     def add_pit(
@@ -269,7 +321,7 @@ class HeightmapGenerator:
         # Spread depth using BFS
         queue = [start]
         used[start] = True  # Mark start as used
-        
+
         while queue:
             current = queue.pop(0)
             h = (h**self.blob_power) * (self._random() * 0.2 + 0.9)
@@ -281,7 +333,7 @@ class HeightmapGenerator:
                 # CRITICAL FIX: Check if used and SKIP (continue) if already processed
                 if used[neighbor]:
                     continue  # Skip cells that have already been processed
-                    
+
                 # Process this cell ONCE
                 depth_factor = h * (self._random() * 0.2 + 0.9)
                 self.heights[neighbor] = self._lim(
@@ -568,9 +620,14 @@ class HeightmapGenerator:
             width: Width of the strait
             direction: "vertical" or "horizontal"
         """
-        width = min(int(self._get_number_in_range(width)), self.config.cells_x // 3)
-        if width < 1:
-            return
+        width_raw = self._get_number_in_range(width)
+        width_int = min(int(width_raw), self.config.cells_x // 3)
+
+        # Match FMG: if (width < 1 && P(width)) return;
+        if width_int < 1:
+            if self._P(width_raw):
+                return
+            # If P(width) fails, continue with width=0 (which will exit the loop immediately)
 
         used = np.zeros(self.n_cells, dtype=bool)
         is_vertical = direction == "vertical"
@@ -606,9 +663,9 @@ class HeightmapGenerator:
         path = self._get_strait_path(start_cell, end_cell)
 
         # Carve strait with decreasing effect - match FMG's simpler logic
-        step = 0.1 / width
+        step = 0.1 / width_int
 
-        for w in range(width, 0, -1):
+        for w in range(width_int, 0, -1):
             exp = 0.9 - step * w
             next_layer = []
 
@@ -782,7 +839,8 @@ class HeightmapGenerator:
             axes: "x", "y", or "both"
         """
         prob = self._get_number_in_range(probability)
-        if self._random() > prob:
+        # Match FMG: if (!P(count)) return;
+        if not self._P(prob):
             return
 
         invert_x = axes != "y"
@@ -799,11 +857,12 @@ class HeightmapGenerator:
             nx = (self.config.cells_x - x - 1) if invert_x else x
             ny = (self.config.cells_y - y - 1) if invert_y else y
 
-            # Calculate new index
-            new_idx = ny * self.config.cells_x + nx
+            # Calculate inverted index
+            inverted_idx = ny * self.config.cells_x + nx
 
-            if 0 <= new_idx < self.n_cells:
-                new_heights[new_idx] = self.heights[i]
+            # Read from inverted position, write to current position
+            if 0 <= inverted_idx < self.n_cells:
+                new_heights[i] = self.heights[inverted_idx]
 
         self.heights = new_heights
 

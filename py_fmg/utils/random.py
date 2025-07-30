@@ -1,9 +1,11 @@
 """
 Random number generation utilities.
+
+This module provides access to FMG's Alea PRNG for exact compatibility
+with the JavaScript implementation. Python's random and NumPy's random
+should not be used in FMG code.
 """
 
-import random
-import numpy as np
 from ..core.alea_prng import AleaPRNG
 
 # Global PRNG instance
@@ -12,20 +14,18 @@ _prng = None
 
 def set_random_seed(seed: str) -> None:
     """
-    Set the random seed for all random number generators.
+    Set the random seed for FMG's Alea PRNG.
+    
+    This only sets the seed for the FMG-compatible Alea PRNG.
+    Python's random and NumPy's random are not used to ensure
+    exact compatibility with the JavaScript FMG implementation.
     
     Args:
         seed: Seed string to use
     """
     global _prng
     
-    # Set Python's random seed
-    random.seed(seed)
-    
-    # Set NumPy's random seed
-    np.random.seed(hash(seed) % (2**32))
-    
-    # Initialize Alea PRNG
+    # Initialize Alea PRNG only
     _prng = AleaPRNG(seed)
 
 

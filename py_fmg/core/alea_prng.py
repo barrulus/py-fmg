@@ -18,6 +18,9 @@ class AleaPRNG:
     
     def __init__(self, seed):
         """Initialize with seed string or number."""
+        # Add call counter
+        self.call_count = 0
+        
         # Convert arguments to array
         if hasattr(seed, '__iter__') and not isinstance(seed, str):
             args = list(seed)
@@ -61,6 +64,7 @@ class AleaPRNG:
     
     def random(self):
         """Generate next random number in [0, 1)."""
+        self.call_count += 1
         t = 2091639 * self.s0 + self.c * 2.3283064365386963e-10  # 2^-32
         self.s0 = self.s1
         self.s1 = self.s2
