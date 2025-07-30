@@ -1,6 +1,5 @@
 """End-to-end test for the complete map generation pipeline."""
 
-import sys
 import pytest
 import numpy as np
 from pathlib import Path
@@ -11,43 +10,285 @@ from py_fmg.core.voronoi_graph import GridConfig, generate_voronoi_graph
 from py_fmg.core.heightmap_generator import HeightmapGenerator, HeightmapConfig
 from py_fmg.core.features import Features
 from py_fmg.core.cell_packing import regraph
-from py_fmg.config.heightmap_templates import TEMPLATES
+from py_fmg.config.heightmap_templates import TEMPLATES, get_template
 
 # Test configuration constants
 TEST_WIDTH = 1200
 TEST_HEIGHT = 1000
 TEST_CELLS_DESIRED = 10000
-DEFAULT_GRID_SEED = "123456"
-DEFAULT_MAP_SEED = "654321"
+DEFAULT_SEED = "123456789"
+
+# NOTE: FMG uses a single seed that gets reseeded at each major stage:
+# 1. Graph generation (Math.random = aleaPRNG(seed))
+# 2. Heightmap generation (Math.random = aleaPRNG(seed))
+# 3. Features markup (Math.random = aleaPRNG(seed))
+# This ensures deterministic results with the same PRNG sequence at each stage.
 
 
-def test_full_pipeline_with_visualization(template="atoll", grid_seed=None, map_seed=None):
+def generate_voronoi_structure_debug(voronoi_graph, output_path, template_name, seed, packed_graph=None):
+    """Generate debug visualization showing Voronoi structure with and without boundary points."""
+    # Create figure with 2x2 or 2x3 subplots depending on whether packed_graph is provided
+    if packed_graph is not None:
+        fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(2, 3, figsize=(24, 16))
+    else:
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 16))
+    
+    # Get dimensions
+    width = voronoi_graph.graph_width
+    height = voronoi_graph.graph_height
+    
+    # Subplot 1: Grid points only
+    ax1.scatter(*voronoi_graph.points.T, s=30, alpha=0.8, label='Grid points')
+    ax1.set_xlim(0, width)
+    ax1.set_ylim(0, height)
+    ax1.set_aspect('equal')
+    ax1.set_title('Grid Points Only', fontsize=14)
+    ax1.legend()
+    
+    # Subplot 2: Grid + Boundary points
+    ax2.scatter(*voronoi_graph.points.T, s=30, alpha=0.8, label='Grid points')
+    ax2.scatter(*voronoi_graph.boundary_points.T, s=50, marker='x', 
+                color='red', alpha=0.8, label='Boundary points')
+    ax2.set_xlim(-50, width + 50)
+    ax2.set_ylim(-50, height + 50)
+    ax2.set_aspect('equal')
+    ax2.set_title('Grid + Boundary Points', fontsize=14)
+    ax2.legend()
+    
+    # For Voronoi visualization, we need to use scipy
+    from scipy.spatial import Voronoi, voronoi_plot_2d
+    
+    # Subplot 3: Voronoi WITHOUT boundary points (shows infinite cells)
+    vor_no_boundary = Voronoi(voronoi_graph.points)
+    voronoi_plot_2d(vor_no_boundary, ax=ax3, show_vertices=False, 
+                    line_colors='blue', line_width=2, point_size=5)
+    ax3.set_xlim(0, width)
+    ax3.set_ylim(0, height)
+    ax3.set_title('Voronoi WITHOUT Boundary Points', fontsize=14)
+    
+    # Subplot 4: Voronoi WITH boundary points (properly bounded)
+    all_points = np.vstack([voronoi_graph.points, voronoi_graph.boundary_points])
+    vor_with_boundary = Voronoi(all_points)
+    voronoi_plot_2d(vor_with_boundary, ax=ax4, show_vertices=False,
+                    line_colors='green', line_width=2, point_size=5)
+    ax4.set_xlim(0, width)
+    ax4.set_ylim(0, height)
+    ax4.set_title('Voronoi WITH Boundary Points', fontsize=14)
+    
+    # If packed_graph is provided, add visualizations for it
+    if packed_graph is not None:
+        # Subplot 3: Packed points colored by height
+        heights = packed_graph.heights
+        scatter = ax3.scatter(*packed_graph.points.T, c=heights, cmap='terrain', 
+                            s=30, alpha=0.8, vmin=0, vmax=100)
+        ax3.set_xlim(0, width)
+        ax3.set_ylim(0, height)
+        ax3.set_aspect('equal')
+        ax3.set_title('Packed Points (Colored by Height)', fontsize=14)
+        plt.colorbar(scatter, ax=ax3, label='Height')
+        
+        # Add water/land line
+        water_mask = heights < 20
+        land_mask = heights >= 20
+        ax3.scatter(*packed_graph.points[water_mask].T, c='blue', s=10, alpha=0.3, label='Water')
+        ax3.scatter(*packed_graph.points[land_mask].T, c='green', s=10, alpha=0.3, label='Land')
+        
+        # Subplot 5: Original vs Packed points
+        ax5.scatter(*voronoi_graph.points.T, s=5, alpha=0.3, label='Original points', color='gray')
+        ax5.scatter(*packed_graph.points.T, s=20, alpha=0.8, label='Packed points', color='red')
+        ax5.set_xlim(0, width)
+        ax5.set_ylim(0, height)
+        ax5.set_aspect('equal')
+        ax5.set_title('Original vs Packed Points', fontsize=14)
+        ax5.legend()
+        
+        # Subplot 6: Packed Voronoi
+        vor_packed = Voronoi(packed_graph.points)
+        voronoi_plot_2d(vor_packed, ax=ax6, show_vertices=False,
+                        line_colors='red', line_width=1.5, point_size=3)
+        ax6.set_xlim(0, width)
+        ax6.set_ylim(0, height)
+        ax6.set_title('Packed/Regraphed Voronoi (Coastal Enhancement)', fontsize=14)
+        
+        # Add coastline detection info
+        if hasattr(packed_graph, 'distance_field'):
+            coastal_cells = (packed_graph.distance_field == 1) | (packed_graph.distance_field == -1)
+            coastal_points = packed_graph.points[coastal_cells]
+            ax6.scatter(*coastal_points.T, c='yellow', s=50, alpha=0.8, 
+                       edgecolors='black', linewidths=1, label='Coastal cells')
+            ax6.legend()
+    
+    # Add overall title
+    title = f'{template_name.title()} - Voronoi Structure (Seed: {seed})'
+    if packed_graph is not None:
+        title += f'\nOriginal: {len(voronoi_graph.points)} cells | Packed: {len(packed_graph.points)} cells'
+    fig.suptitle(title, fontsize=16)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def generate_heightmap_steps_debug(heightmap_gen, template_name, output_path, seed):
+    """Generate step-by-step visualization of heightmap generation."""
+    from scipy.interpolate import griddata
+    from matplotlib.colors import LinearSegmentedColormap
+    
+    # Parse template to get steps
+    template_text = get_template(template_name)
+    lines = template_text.strip().split("\n")
+    
+    # Store heights at each step
+    step_heights = []
+    step_labels = []
+    
+    # Reset heightmap generator
+    heightmap_gen.heights = np.zeros(heightmap_gen.n_cells, dtype=np.float32)
+    
+    # Execute each command and store results
+    step_count = 0
+    for line in lines:
+        parts = line.strip().split()
+        if len(parts) < 2:
+            continue
+            
+        command = parts[0]
+        args = parts[1:]
+        
+        # Execute command
+        if command == "Hill":
+            heightmap_gen.add_hill(*args)
+        elif command == "Pit":
+            heightmap_gen.add_pit(*args)
+        elif command == "Range":
+            heightmap_gen.add_range(*args)
+        elif command == "Trough":
+            heightmap_gen.add_trough(*args)
+        elif command == "Strait":
+            heightmap_gen.add_strait(*args)
+        elif command == "Smooth":
+            heightmap_gen.smooth(*args)
+        elif command == "Mask":
+            heightmap_gen.mask(float(args[0]))
+        elif command == "Add":
+            heightmap_gen.modify(args[1], add=float(args[0]))
+        elif command == "Multiply":
+            heightmap_gen.modify(args[1], multiply=float(args[0]))
+        elif command == "Invert":
+            heightmap_gen.invert(*args)
+            
+        # Only store major steps (not every smooth/mask operation)
+        if command in ["Hill", "Pit", "Range", "Trough", "Strait", "Multiply"]:
+            step_count += 1
+            step_heights.append(heightmap_gen.heights.copy())
+            step_labels.append(f"Step {step_count}: {' '.join([command] + args[:2])}")
+            
+        # Limit to 6 steps for visualization
+        if len(step_heights) >= 6:
+            break
+    
+    # Create figure with 2x3 subplots
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    axes = axes.flatten()
+    
+    # Colormap
+    colors = [
+        (0.0, "#001a33"),  # Deep ocean
+        (0.1, "#003366"),  # Ocean
+        (0.19, "#0066cc"),  # Shallow water
+        (0.20, "#66b266"),  # Coast/grass
+        (0.35, "#99cc99"),  # Plains
+        (0.50, "#cccc99"),  # Hills
+        (0.65, "#cc9966"),  # Mountains
+        (0.80, "#996633"),  # High mountains
+        (1.0, "#ffffff"),  # Snow peaks
+    ]
+    cmap = LinearSegmentedColormap.from_list("terrain_custom", colors, N=100)
+    
+    # Plot each step
+    for i, (heights, label) in enumerate(zip(step_heights, step_labels)):
+        if i >= 6:
+            break
+            
+        ax = axes[i]
+        
+        # Scatter plot with colors
+        points_array = np.array(heightmap_gen.graph.points)
+        scatter = ax.scatter(points_array[:, 0], points_array[:, 1], 
+                           c=heights, cmap=cmap, s=10, vmin=0, vmax=100)
+        
+        # Format
+        ax.set_xlim(0, heightmap_gen.config.width)
+        ax.set_ylim(0, heightmap_gen.config.height)
+        ax.set_aspect('equal')
+        ax.set_title(label, fontsize=12)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        
+        # Add colorbar
+        cbar = plt.colorbar(scatter, ax=ax, fraction=0.046, pad=0.04)
+        cbar.ax.tick_params(labelsize=10)
+        
+        # Add water/land statistics
+        water = np.sum(heights < 20)
+        land = np.sum(heights >= 20)
+        total = len(heights)
+        water_pct = (water / total) * 100
+        ax.text(0.02, 0.98, f"Water: {water_pct:.1f}%\nLand: {100-water_pct:.1f}%",
+                transform=ax.transAxes, verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                fontsize=10)
+    
+    # Hide unused subplots
+    for i in range(len(step_heights), 6):
+        axes[i].axis('off')
+    
+    # Add overall title
+    fig.suptitle(f'{template_name.title()} - Heightmap Generation Steps (Seed: {seed})', fontsize=16)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def test_full_pipeline_with_visualization(template="atoll", seed=None, generate_debug_images=True):
     """Test the complete map generation pipeline from seed to packed graph.
     
     Args:
         template: Heightmap template name
-        grid_seed: Seed for Voronoi generation (defaults to DEFAULT_GRID_SEED)
-        map_seed: Seed for heightmap generation (defaults to DEFAULT_MAP_SEED)
+        seed: Single seed used for all stages (defaults to DEFAULT_SEED)
+        generate_debug_images: Whether to generate step-by-step debug images
     """
-    # Use defaults if not provided
-    grid_seed = grid_seed or DEFAULT_GRID_SEED
-    map_seed = map_seed or DEFAULT_MAP_SEED
+    # Use default if not provided
+    seed = seed or DEFAULT_SEED
     
     # Stage 1: Configure grid parameters
     width = TEST_WIDTH
     height = TEST_HEIGHT
     cells_desired = TEST_CELLS_DESIRED
+    
+    # Create output directory and timestamp for all files
+    output_dir = Path("tests/output")
+    output_dir.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     config = GridConfig(width=width, height=height, cells_desired=cells_desired)
 
     # Stage 2: Generate Voronoi graph
     print("Generating Voronoi graph...")
-    voronoi_graph = generate_voronoi_graph(config, grid_seed)
+    voronoi_graph = generate_voronoi_graph(config, seed=seed)
     assert voronoi_graph is not None
     assert len(voronoi_graph.points) > 0
     assert voronoi_graph.cells_x > 0
     assert voronoi_graph.cells_y > 0
     print(f"Generated {len(voronoi_graph.points)} Voronoi cells")
+    
+    # Generate initial Voronoi structure debug image if requested
+    if generate_debug_images:
+        voronoi_debug_path = output_dir / f"voronoi_structure_{template}_{seed}_{timestamp}.png"
+        print("Generating initial Voronoi structure debug visualization...")
+        generate_voronoi_structure_debug(voronoi_graph, voronoi_debug_path, template, seed)
+        print(f"Initial Voronoi structure saved to {voronoi_debug_path}")
 
     # Stage 3: Generate heightmap
     print("Generating heightmap...")
@@ -60,8 +301,20 @@ def test_full_pipeline_with_visualization(template="atoll", grid_seed=None, map_
         spacing=voronoi_graph.spacing,
     )
 
-    heightmap_gen = HeightmapGenerator(heightmap_config, voronoi_graph)
-    heights = heightmap_gen.from_template(template, map_seed)
+    # Initialize heightmap generator with seed for proper PRNG reseeding
+    heightmap_gen = HeightmapGenerator(heightmap_config, voronoi_graph, seed=seed)
+    
+    # Generate heightmap steps debug image if requested
+    if generate_debug_images:
+        heightmap_steps_path = output_dir / f"heightmap_steps_{template}_{seed}_{timestamp}.png"
+        print("Generating heightmap steps debug visualization...")
+        generate_heightmap_steps_debug(heightmap_gen, template, heightmap_steps_path, seed)
+        print(f"Heightmap steps saved to {heightmap_steps_path}")
+        
+        # Re-generate the final heightmap since debug consumed it
+        heightmap_gen = HeightmapGenerator(heightmap_config, voronoi_graph, seed=seed)
+    
+    heights = heightmap_gen.from_template(template, seed=seed)
 
     # Verify heightmap properties
     assert heights is not None
@@ -79,7 +332,8 @@ def test_full_pipeline_with_visualization(template="atoll", grid_seed=None, map_
 
     # Stage 4: Mark up coastlines with Features
     print("Marking up coastlines...")
-    features = Features(voronoi_graph)
+    # Pass seed to Features for PRNG reseeding (though it currently doesn't use randomness)
+    features = Features(voronoi_graph, seed=seed)
     features.markup_grid()
 
     # Verify that distance_field was created
@@ -90,6 +344,13 @@ def test_full_pipeline_with_visualization(template="atoll", grid_seed=None, map_
     # Stage 5: Perform reGraph coastal resampling
     print("Performing reGraph coastal resampling...")
     packed_graph = regraph(voronoi_graph)
+    
+    # Generate packed Voronoi structure debug image if requested
+    if generate_debug_images:
+        packed_voronoi_path = output_dir / f"voronoi_packed_{template}_{seed}_{timestamp}.png"
+        print("Generating packed Voronoi structure debug visualization...")
+        generate_voronoi_structure_debug(voronoi_graph, packed_voronoi_path, template, seed, packed_graph)
+        print(f"Packed Voronoi structure saved to {packed_voronoi_path}")
 
     # Verify regraph results
     assert packed_graph is not None
@@ -110,8 +371,6 @@ def test_full_pipeline_with_visualization(template="atoll", grid_seed=None, map_
 
     # Stage 6: Generate visualization matching generate_sample_maps.py
     print("Generating visualization...")
-    output_dir = Path("tests/output")
-    output_dir.mkdir(exist_ok=True)
 
     # Import needed for interpolation
     from scipy.interpolate import griddata
@@ -215,7 +474,7 @@ def test_full_pipeline_with_visualization(template="atoll", grid_seed=None, map_
     ax.text(
         0.98,
         0.02,
-        f"Seeds: grid={grid_seed}, map={map_seed}",
+        f"Seed: {seed}",
         transform=ax.transAxes,
         bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
         horizontalalignment="right",
@@ -223,9 +482,8 @@ def test_full_pipeline_with_visualization(template="atoll", grid_seed=None, map_
         family="monospace",
     )
 
-    # Save with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_filename = f"heightmap_{template}_{grid_seed}+{map_seed}_{timestamp}.png"
+    # Save final visualization
+    output_filename = f"heightmap_{template}_{seed}_{timestamp}.png"
     output_path = output_dir / output_filename
     plt.savefig(output_path, dpi=150, bbox_inches="tight", pad_inches=0.1)
     plt.close()
@@ -234,7 +492,7 @@ def test_full_pipeline_with_visualization(template="atoll", grid_seed=None, map_
     print("\nPipeline test completed successfully!")
 
     # Return results for potential further testing
-    return {
+    results = {
         "voronoi_graph": voronoi_graph,
         "heights": heights,
         "packed_graph": packed_graph,
@@ -242,6 +500,13 @@ def test_full_pipeline_with_visualization(template="atoll", grid_seed=None, map_
         "features": features,
         "visualization_path": output_path,
     }
+    
+    if generate_debug_images:
+        results["voronoi_debug_path"] = voronoi_debug_path
+        results["heightmap_steps_path"] = heightmap_steps_path
+        results["packed_voronoi_path"] = packed_voronoi_path
+        
+    return results
 
 
 def test_pipeline_error_handling():
@@ -249,7 +514,7 @@ def test_pipeline_error_handling():
 
     # Generate basic components
     config = GridConfig(width=TEST_WIDTH, height=TEST_HEIGHT, cells_desired=TEST_CELLS_DESIRED)
-    voronoi_graph = generate_voronoi_graph(config, "error-test")
+    voronoi_graph = generate_voronoi_graph(config, seed="error-test")
 
     heightmap_config = HeightmapConfig(
         width=TEST_WIDTH,
@@ -260,8 +525,8 @@ def test_pipeline_error_handling():
         spacing=voronoi_graph.spacing,
     )
 
-    heightmap_gen = HeightmapGenerator(heightmap_config, voronoi_graph)
-    heights = heightmap_gen.from_template("atoll", "error-test")
+    heightmap_gen = HeightmapGenerator(heightmap_config, voronoi_graph, seed="error-test")
+    heights = heightmap_gen.from_template("atoll", seed="error-test")
     voronoi_graph.heights = heights
 
     # Try to call regraph WITHOUT Features.markup_grid()
@@ -280,10 +545,10 @@ def main():
     parser = argparse.ArgumentParser(description="Test FMG pipeline with various templates")
     parser.add_argument("--template", default="all", 
                        help="Template name or 'all' to test all templates")
-    parser.add_argument("--grid-seed", default=DEFAULT_GRID_SEED,
-                       help=f"Grid seed (default: {DEFAULT_GRID_SEED})")
-    parser.add_argument("--map-seed", default=DEFAULT_MAP_SEED,
-                       help=f"Map seed (default: {DEFAULT_MAP_SEED})")
+    parser.add_argument("--seed", default=DEFAULT_SEED,
+                       help=f"Seed for map generation (default: {DEFAULT_SEED})")
+    parser.add_argument("--debug-images", action="store_true",
+                       help="Generate debug images (voronoi structure and heightmap steps)")
     
     args = parser.parse_args()
     
@@ -300,8 +565,7 @@ def main():
         templates_to_test = [args.template]
         print(f"Testing template: {args.template}")
     
-    print(f"Grid seed: {args.grid_seed}")
-    print(f"Map seed: {args.map_seed}")
+    print(f"Seed: {args.seed}")
     print("=" * 60)
     
     # Run tests for each template
@@ -313,8 +577,8 @@ def main():
             print(f"\nTesting {template} template...")
             results = test_full_pipeline_with_visualization(
                 template=template,
-                grid_seed=args.grid_seed,
-                map_seed=args.map_seed
+                seed=args.seed,
+                generate_debug_images=args.debug_images
             )
             successful += 1
         except Exception as e:

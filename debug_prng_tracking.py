@@ -127,5 +127,5 @@ if __name__ == "__main__":
         height=1000,
         cells_desired=10000,
         template="isthmus",
-        seed="654321"
+        seed="123456789"
     )

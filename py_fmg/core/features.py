@@ -41,12 +41,13 @@ class Feature:
 class Features:
     """Handles geographic feature detection and markup."""
     
-    def __init__(self, graph):
+    def __init__(self, graph, seed: Optional[str] = None):
         """
         Initialize Features with a VoronoiGraph.
         
         Args:
             graph: VoronoiGraph instance with populated heights
+            seed: Optional seed for PRNG reseeding
         """
         self.graph = graph
         self.n_cells = len(graph.points)
@@ -56,6 +57,11 @@ class Features:
             self.border_cells = graph.border_cells
         else:
             self.border_cells = graph.cell_border_flags
+        
+        # Reseed PRNG if seed provided (matches FMG's features.js:31)
+        if seed:
+            from ..utils.random import set_random_seed
+            set_random_seed(seed)
         
     def is_land(self, cell_id: int) -> bool:
         """Check if a cell is land (height >= 20)."""
@@ -77,7 +83,9 @@ class Features:
         self.features = [None]  # index 0 is reserved
         
         # Use BFS to identify connected features
-        queue = deque([0])
+        # Find the cell with the lowest height value (guaranteed to be ocean)
+        guaranteed_ocean_cell = np.argmin(self.graph.heights)
+        queue = deque([guaranteed_ocean_cell])
         feature_id = 1
         
         while len(queue) > 0 and queue[0] != -1:

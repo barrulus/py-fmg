@@ -16,7 +16,7 @@ class TestHeightmapGenerator:
     def small_graph(self):
         """Create a small test graph."""
         config = GridConfig(width=100, height=100, cells_desired=100)
-        return generate_voronoi_graph(config, seed="test123")
+        return generate_voronoi_graph(config, seed="123456789")
 
     @pytest.fixture
     def heightmap_config(self):

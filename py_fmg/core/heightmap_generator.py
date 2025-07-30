@@ -31,13 +31,14 @@ class HeightmapGenerator:
     optimized using NumPy for better performance.
     """
 
-    def __init__(self, config: HeightmapConfig, graph):
+    def __init__(self, config: HeightmapConfig, graph, seed: Optional[str] = None):
         """
         Initialize the heightmap generator.
 
         Args:
             config: Heightmap configuration
             graph: Voronoi graph structure with cells and connectivity
+            seed: Optional seed for PRNG reseeding
         """
         self.config = config
         self.graph = graph
@@ -51,8 +52,12 @@ class HeightmapGenerator:
         self.blob_power = self._get_blob_power(config.cells_desired)
         self.line_power = self._get_line_power(config.cells_desired)
 
-        # Cache PRNG reference
-        self._prng = None
+        # Reseed PRNG if seed provided (matches FMG's heightmap-generator.js:68)
+        if seed:
+            set_random_seed(seed)
+            self._prng = get_prng()
+        else:
+            self._prng = None
 
     def _get_blob_power(self, cells: int) -> float:
         """Get blob spreading power factor based on cell count."""
@@ -227,6 +232,8 @@ class HeightmapGenerator:
         This version corrects the NameError and implements the FMG queueing logic.
         """
         # 1. INITIAL SETUP
+        # CRITICAL: Use uint8 to match FMG's Uint8Array behavior
+        # The integer truncation is essential to the algorithm!
         change = np.zeros(self.n_cells, dtype=np.uint8)
         h = self._lim(self._get_number_in_range(height))
 
@@ -270,12 +277,11 @@ class HeightmapGenerator:
                     self._random() * 0.2 + 0.9
                 )
 
-                # Assign it to the uint8 array, letting NumPy handle the truncation.
+                # CRITICAL: Store the value (will be truncated to int by uint8 array)
                 change[neighbor] = new_height_float
 
-                # CRITICAL FIX: Check the STORED, TRUNCATED integer value.
+                # Check the STORED truncated value, not the float!
                 if change[neighbor] > 1:
-                    # If the stored integer is > 1, the spread continues.
                     queue.append(neighbor)
 
         # 6. APPLY CHANGES
@@ -305,7 +311,7 @@ class HeightmapGenerator:
     def _add_one_pit(self, height: Union[int, str], range_x: str, range_y: str) -> None:
         """Add a single pit using blob spreading."""
         used = np.zeros(self.n_cells, dtype=bool)
-        h = self._lim(self._get_number_in_range(height))
+        h = self._get_number_in_range(height)  # Don't limit initial h value
 
         # Find starting point (prefer non-water cells)
         limit = 0
@@ -880,9 +886,10 @@ class HeightmapGenerator:
             Generated heights array
         """
         if seed:
+            # Reseed PRNG for heightmap generation (matches FMG's Math.random = aleaPRNG(seed))
             set_random_seed(seed)
             # Reset our cached PRNG reference to use the new seed
-            self._prng = None
+            self._prng = get_prng()
 
         # Load template by name
         from ..config.heightmap_templates import get_template

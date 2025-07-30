@@ -420,6 +420,11 @@ def generate_voronoi_graph(config: GridConfig, seed: str = None,
                 width=config.width, height=config.height, 
                 cells_desired=config.cells_desired, seed=seed)
     
+    # Reseed PRNG for graph generation (matches FMG's graphUtils.js:19)
+    if seed:
+        from ..utils.random import set_random_seed
+        set_random_seed(seed)
+    
     # Calculate grid parameters
     spacing = np.sqrt((config.width * config.height) / config.cells_desired)
     spacing = round(spacing, 2)
