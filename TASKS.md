@@ -58,7 +58,7 @@ Based on analysis of the Fantasy Map Generator (FMG) codebase and PLAN.md requir
 - Task 8: Voronoi Graph Generation (100% complete with enhancements)
 - Task 9: Heightmap Generation (100% complete - all issues resolved)
 - Task 9.5: Cell Packing/reGraph (100% complete)
-- Task 10: Geographic Features - Basic Implementation (100% complete)
+- Task 10: Geographic Features - Basic Implementation (0% - not started)
 
 🚧 **In Progress:**
 - None currently
