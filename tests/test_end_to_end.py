@@ -9,6 +9,8 @@ from datetime import datetime
 from py_fmg.core.voronoi_graph import GridConfig, generate_voronoi_graph
 from py_fmg.core.heightmap_generator import HeightmapGenerator, HeightmapConfig
 from py_fmg.core.features import Features
+from py_fmg.core.climate import Climate, ClimateOptions, MapCoordinates
+from py_fmg.core.hydrology import Hydrology, HydrologyOptions
 from py_fmg.core.cell_packing import regraph
 from py_fmg.config.heightmap_templates import TEMPLATES, get_template
 
@@ -280,6 +282,265 @@ def generate_heightmap_steps_debug(heightmap_gen, template_name, output_path, se
     plt.close()
 
 
+def generate_voronoi_debug(voronoi_graph, output_path, template_name, seed):
+    """Generate debug visualization showing initial Voronoi diagram."""
+    from scipy.spatial import Voronoi, voronoi_plot_2d
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Get dimensions
+    width = voronoi_graph.graph_width
+    height = voronoi_graph.graph_height
+    
+    # Plot Voronoi diagram
+    vor = Voronoi(voronoi_graph.points)
+    voronoi_plot_2d(
+        vor,
+        ax=ax,
+        show_vertices=False,
+        line_colors="gray",
+        line_width=0.5,
+        point_size=2,
+    )
+    
+    # Plot points colored by height if available
+    if hasattr(voronoi_graph, 'heights') and voronoi_graph.heights is not None:
+        scatter = ax.scatter(
+            *voronoi_graph.points.T,
+            c=voronoi_graph.heights,
+            cmap="terrain",
+            s=15,
+            alpha=0.7,
+            vmin=0,
+            vmax=100,
+        )
+        plt.colorbar(scatter, ax=ax, label="Height")
+    else:
+        ax.scatter(
+            *voronoi_graph.points.T,
+            c="red",
+            s=15,
+            alpha=0.7,
+        )
+    
+    ax.set_xlim(0, width)
+    ax.set_ylim(0, height)
+    ax.set_aspect("equal")
+    ax.set_title(f"{template_name.title()} - Initial Voronoi Diagram", fontsize=14)
+    
+    # Add statistics
+    ax.text(
+        0.02, 0.98,
+        f"Points: {len(voronoi_graph.points):,}\nAfter Lloyd's relaxation",
+        transform=ax.transAxes,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+        fontsize=10,
+    )
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+
+def generate_climate_debug(climate, packed_graph, output_path, template_name, seed):
+    """Generate debug visualization showing temperature and precipitation."""
+    from matplotlib.colors import LinearSegmentedColormap
+    
+    # Create figure with 1x2 subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+    
+    # Get dimensions
+    width = packed_graph.graph_width
+    height = packed_graph.graph_height
+    
+    # Subplot 1: Temperature
+    temp_scatter = ax1.scatter(
+        *packed_graph.points.T,
+        c=climate.temperatures,
+        cmap="RdYlBu_r",  # Red-Yellow-Blue reversed (hot to cold)
+        s=30,
+        alpha=0.8,
+        vmin=-30,
+        vmax=30,
+    )
+    ax1.set_xlim(0, width)
+    ax1.set_ylim(0, height)
+    ax1.set_aspect("equal")
+    ax1.set_title("Temperature Distribution (°C)", fontsize=14)
+    plt.colorbar(temp_scatter, ax=ax1, label="Temperature (°C)")
+    
+    # Add temperature statistics
+    avg_temp = np.mean(climate.temperatures)
+    min_temp = np.min(climate.temperatures)
+    max_temp = np.max(climate.temperatures)
+    ax1.text(
+        0.02, 0.98,
+        f"Avg: {avg_temp:.1f}°C\nMin: {min_temp:.1f}°C\nMax: {max_temp:.1f}°C",
+        transform=ax1.transAxes,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+        fontsize=10,
+    )
+    
+    # Subplot 2: Precipitation
+    precip_scatter = ax2.scatter(
+        *packed_graph.points.T,
+        c=climate.precipitation,
+        cmap="Blues",  # Blue scale for precipitation
+        s=30,
+        alpha=0.8,
+        vmin=0,
+        vmax=np.max(climate.precipitation),
+    )
+    ax2.set_xlim(0, width)
+    ax2.set_ylim(0, height)
+    ax2.set_aspect("equal")
+    ax2.set_title("Precipitation Distribution (mm)", fontsize=14)
+    plt.colorbar(precip_scatter, ax=ax2, label="Precipitation (mm)")
+    
+    # Add precipitation statistics
+    avg_precip = np.mean(climate.precipitation)
+    min_precip = np.min(climate.precipitation)
+    max_precip = np.max(climate.precipitation)
+    ax2.text(
+        0.02, 0.98,
+        f"Avg: {avg_precip:.1f}mm\nMin: {min_precip:.1f}mm\nMax: {max_precip:.1f}mm",
+        transform=ax2.transAxes,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+        fontsize=10,
+    )
+    
+    # Add overall title
+    title = f"{template_name.title()} - Climate Analysis (Seed: {seed})"
+    fig.suptitle(title, fontsize=16)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+
+def generate_hydrology_debug(rivers, hydrology, packed_graph, output_path, template_name, seed):
+    """Generate debug visualization showing river networks and discharge."""
+    from matplotlib.colors import LinearSegmentedColormap
+    import matplotlib.patches as mpatches
+    
+    # Create figure with 1x2 subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+    
+    # Get dimensions
+    width = packed_graph.graph_width
+    height = packed_graph.graph_height
+    
+    # Subplot 1: River Network with Discharge
+    # Plot base terrain
+    terrain_scatter = ax1.scatter(
+        *packed_graph.points.T,
+        c=packed_graph.heights,
+        cmap="terrain",
+        s=10,
+        alpha=0.3,
+        vmin=0,
+        vmax=100,
+    )
+    
+    # Plot rivers colored by discharge
+    if rivers:
+        river_discharges = []
+        river_points_x = []
+        river_points_y = []
+        river_widths = []
+        
+        for river_id, river_data in rivers.items():
+            if river_data.cells and river_data.discharge > 0:
+                for cell_id in river_data.cells:
+                    if cell_id < len(packed_graph.points):
+                        point = packed_graph.points[cell_id]
+                        river_points_x.append(point[0])
+                        river_points_y.append(point[1])
+                        river_discharges.append(river_data.discharge)
+                        river_widths.append(max(river_data.width * 2, 20))  # Scale for visibility
+        
+        if river_discharges:
+            river_scatter = ax1.scatter(
+                river_points_x,
+                river_points_y,
+                c=river_discharges,
+                cmap="Blues",
+                s=river_widths,
+                alpha=0.8,
+                edgecolors='navy',
+                linewidths=0.5,
+                vmin=0,
+                vmax=max(river_discharges),
+            )
+            plt.colorbar(river_scatter, ax=ax1, label="Discharge (m³/s)")
+    
+    ax1.set_xlim(0, width)
+    ax1.set_ylim(0, height)
+    ax1.set_aspect("equal")
+    ax1.set_title("River Network by Discharge", fontsize=14)
+    
+    # Add river statistics
+    if rivers:
+        total_rivers = len(rivers)
+        main_rivers = sum(1 for r in rivers.values() if r.parent_id is None)
+        tributary_rivers = total_rivers - main_rivers
+        max_discharge = max(r.discharge for r in rivers.values()) if rivers else 0
+        avg_discharge = np.mean([r.discharge for r in rivers.values()]) if rivers else 0
+        
+        ax1.text(
+            0.02, 0.98,
+            f"Total: {total_rivers} rivers\nMain: {main_rivers}\nTributaries: {tributary_rivers}\n"
+            f"Max discharge: {max_discharge:.1f} m³/s\nAvg discharge: {avg_discharge:.1f} m³/s",
+            transform=ax1.transAxes,
+            verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+            fontsize=9,
+        )
+    
+    # Subplot 2: Flow Accumulation
+    flux_scatter = ax2.scatter(
+        *packed_graph.points.T,
+        c=hydrology.flux,
+        cmap="YlOrRd",  # Yellow-Orange-Red for flow accumulation
+        s=20,
+        alpha=0.7,
+        vmin=0,
+        vmax=np.max(hydrology.flux),
+    )
+    ax2.set_xlim(0, width)
+    ax2.set_ylim(0, height)
+    ax2.set_aspect("equal")
+    ax2.set_title("Water Flow Accumulation", fontsize=14)
+    plt.colorbar(flux_scatter, ax=ax2, label="Flow Accumulation (m³/s)")
+    
+    # Add flux statistics
+    max_flux = np.max(hydrology.flux)
+    avg_flux = np.mean(hydrology.flux)
+    river_threshold = hydrology.options.min_river_flux
+    
+    ax2.text(
+        0.02, 0.98,
+        f"Max flux: {max_flux:.1f} m³/s\nAvg flux: {avg_flux:.1f} m³/s\n"
+        f"River threshold: {river_threshold} m³/s",
+        transform=ax2.transAxes,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+        fontsize=10,
+    )
+    
+    # Add overall title
+    title = f"{template_name.title()} - Hydrology Analysis (Seed: {seed})"
+    fig.suptitle(title, fontsize=16)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+
 def test_full_pipeline_with_visualization(
     template="atoll", seed=None, generate_debug_images=True
 ):
@@ -313,6 +574,17 @@ def test_full_pipeline_with_visualization(
     assert voronoi_graph.cells_x > 0
     assert voronoi_graph.cells_y > 0
     print(f"Generated {len(voronoi_graph.points)} Voronoi cells")
+    
+    # Generate initial Voronoi debug image if requested
+    if generate_debug_images:
+        voronoi_path = (
+            output_dir / f"{template}_1_voronoi_{timestamp}.png"
+        )
+        print("Generating initial Voronoi debug visualization...")
+        generate_voronoi_debug(
+            voronoi_graph, voronoi_path, template, seed
+        )
+        print(f"Initial Voronoi saved to {voronoi_path}")
 
     # Stage 3: Generate heightmap
     print("Generating heightmap...")
@@ -331,7 +603,7 @@ def test_full_pipeline_with_visualization(
     # Generate heightmap steps debug image if requested
     if generate_debug_images:
         heightmap_steps_path = (
-            output_dir / f"heightmap_steps_{template}_{seed}_{timestamp}.png"
+            output_dir / f"{template}_3_heightmap_steps_{timestamp}.png"
         )
         print("Generating heightmap steps debug visualization...")
         generate_heightmap_steps_debug(
@@ -373,16 +645,16 @@ def test_full_pipeline_with_visualization(
     print("Performing reGraph coastal resampling...")
     packed_graph = regraph(voronoi_graph)
 
-    # Generate packed Voronoi structure debug image if requested
+    # Generate packed Voronoi debug image if requested
     if generate_debug_images:
         packed_voronoi_path = (
-            output_dir / f"voronoi_packed_{template}_{seed}_{timestamp}.png"
+            output_dir / f"{template}_2_voronoi_packed_{timestamp}.png"
         )
-        print("Generating packed Voronoi structure debug visualization...")
+        print("Generating packed Voronoi debug visualization...")
         generate_packed_voronoi_debug(
             voronoi_graph, packed_graph, packed_voronoi_path, template, seed
         )
-        print(f"Packed Voronoi structure saved to {packed_voronoi_path}")
+        print(f"Packed Voronoi saved to {packed_voronoi_path}")
 
     # Verify regraph results
     assert packed_graph is not None
@@ -401,7 +673,76 @@ def test_full_pipeline_with_visualization(
     assert len(packed_graph.points) > 100  # Should still have a reasonable number
     # The actual reduction/increase depends on the template and water/land distribution
 
-    # Stage 6: Generate visualization matching generate_sample_maps.py
+    # Generate Stage 4: Final heightmap visualization
+    if generate_debug_images:
+        final_heightmap_path = (
+            output_dir / f"{template}_4_heightmap_{timestamp}.png"
+        )
+        print("Generating final heightmap visualization...")
+        generate_packed_voronoi_debug(
+            voronoi_graph, packed_graph, final_heightmap_path, template, seed
+        )
+        print(f"Final heightmap saved to {final_heightmap_path}")
+
+    # Stage 6: Mark up features on packed graph
+    print("Marking up features on packed graph...")
+    packed_features = Features(packed_graph, seed=seed)
+    packed_features.markup_grid()
+
+    # Stage 7: Calculate climate
+    print("Calculating climate...")
+    climate = Climate(packed_graph)
+    climate.calculate_temperatures()
+    climate.generate_precipitation()
+    
+    # Generate climate debug image if requested
+    if generate_debug_images:
+        climate_path = (
+            output_dir / f"{template}_5_climate_{timestamp}.png"
+        )
+        print("Generating climate debug visualization...")
+        generate_climate_debug(
+            climate, packed_graph, climate_path, template, seed
+        )
+        print(f"Climate visualization saved to {climate_path}")
+
+    # Verify climate calculations
+    assert hasattr(climate, "temperatures")
+    assert hasattr(climate, "precipitation")
+    assert len(climate.temperatures) == len(packed_graph.points)
+    assert len(climate.precipitation) == len(packed_graph.points)
+
+    # Stage 8: Generate hydrology system
+    print("Generating hydrology system...")
+    hydrology = Hydrology(packed_graph, packed_features, climate)
+    rivers = hydrology.generate_rivers()
+    
+    # Generate hydrology debug image if requested
+    if generate_debug_images:
+        hydrology_path = (
+            output_dir / f"{template}_6_hydrology_{timestamp}.png"
+        )
+        print("Generating hydrology debug visualization...")
+        generate_hydrology_debug(
+            rivers, hydrology, packed_graph, hydrology_path, template, seed
+        )
+        print(f"Hydrology visualization saved to {hydrology_path}")
+
+    # Verify hydrology system
+    assert isinstance(rivers, dict)
+    assert len(rivers) >= 0  # May have 0 rivers for some templates
+    for river_id, river_data in rivers.items():
+        assert hasattr(river_data, 'discharge')
+        assert hasattr(river_data, 'width')
+        assert hasattr(river_data, 'length')
+        assert hasattr(river_data, 'cells')
+        assert river_data.discharge >= 0
+        assert river_data.width >= 0
+        assert len(river_data.cells) > 0
+
+    print(f"Generated {len(rivers)} rivers with max discharge: {max(r.discharge for r in rivers.values()) if rivers else 0:.1f} m³/s")
+
+    # Stage 9: Generate comprehensive final visualization
     print("Generating visualization...")
 
     # Import needed for interpolation
@@ -485,11 +826,13 @@ def test_full_pipeline_with_visualization(
     cbar.ax.text(1.5, 20, "Sea Level", rotation=0, va="center", fontsize=10)
 
     # Add pipeline info
-    pipeline_text = "Full FMG Pipeline:\n"
+    pipeline_text = "Complete FMG Pipeline:\n"
     pipeline_text += "✓ Voronoi + Lloyd's\n"
     pipeline_text += "✓ Heightmap template\n"
     pipeline_text += "✓ Features.markupGrid\n"
-    pipeline_text += "✓ reGraph (coastal enhancement)"
+    pipeline_text += "✓ reGraph (coastal enhancement)\n"
+    pipeline_text += "✓ Climate system\n"
+    pipeline_text += "✓ Hydrology + rivers"
 
     ax.text(
         0.02,
@@ -514,8 +857,8 @@ def test_full_pipeline_with_visualization(
         family="monospace",
     )
 
-    # Save final visualization
-    output_filename = f"heightmap_{template}_{seed}_{timestamp}.png"
+    # Save comprehensive final visualization  
+    output_filename = f"{template}_7_comprehensive_{timestamp}.png"
     output_path = output_dir / output_filename
     plt.savefig(output_path, dpi=150, bbox_inches="tight", pad_inches=0.1)
     plt.close()
@@ -530,12 +873,20 @@ def test_full_pipeline_with_visualization(
         "packed_graph": packed_graph,
         "packed_heights": packed_heights,
         "features": features,
+        "packed_features": packed_features,
+        "climate": climate,
+        "hydrology": hydrology,
+        "rivers": rivers,
         "visualization_path": output_path,
     }
 
     if generate_debug_images:
-        results["heightmap_steps_path"] = heightmap_steps_path
+        results["voronoi_path"] = voronoi_path
         results["packed_voronoi_path"] = packed_voronoi_path
+        results["heightmap_steps_path"] = heightmap_steps_path
+        results["final_heightmap_path"] = final_heightmap_path
+        results["climate_path"] = climate_path
+        results["hydrology_path"] = hydrology_path
 
     return results
 
@@ -571,6 +922,93 @@ def test_pipeline_error_handling():
     print(
         "Error handling test passed: regraph correctly requires Features.markup_grid()"
     )
+
+
+def test_complete_pipeline_with_climate_and_hydrology(
+    template="atoll", seed=None
+):
+    """Test the complete map generation pipeline including climate and hydrology.
+    
+    Args:
+        template: Heightmap template name
+        seed: Single seed used for all stages (defaults to DEFAULT_SEED)
+    """
+    # Use default if not provided
+    seed = seed or DEFAULT_SEED
+    
+    # Stage 1: Generate Voronoi graph
+    config = GridConfig(width=TEST_WIDTH, height=TEST_HEIGHT, cells_desired=TEST_CELLS_DESIRED)
+    voronoi_graph = generate_voronoi_graph(config, seed=seed)
+    
+    # Stage 2: Generate heightmap
+    heightmap_config = HeightmapConfig(
+        width=int(TEST_WIDTH),
+        height=int(TEST_HEIGHT),
+        cells_x=voronoi_graph.cells_x,
+        cells_y=voronoi_graph.cells_y,
+        cells_desired=TEST_CELLS_DESIRED,
+        spacing=voronoi_graph.spacing,
+    )
+    
+    heightmap_gen = HeightmapGenerator(heightmap_config, voronoi_graph, seed=seed)
+    heights = heightmap_gen.from_template(template, seed=seed)
+    voronoi_graph.heights = heights
+    
+    # Stage 3: Mark up features
+    features = Features(voronoi_graph, seed=seed)
+    features.markup_grid()
+    
+    # Stage 4: Perform reGraph coastal enhancement
+    packed_graph = regraph(voronoi_graph)
+    
+    # Stage 5: Mark up features on packed graph
+    packed_features = Features(packed_graph, seed=seed)
+    packed_features.markup_grid()
+    
+    # Stage 6: Calculate climate
+    climate = Climate(packed_graph)  # Use default options and coordinates
+    climate.calculate_temperatures()
+    climate.generate_precipitation()
+    
+    # Verify climate calculations
+    assert hasattr(climate, "temperatures")
+    assert hasattr(climate, "precipitation")
+    assert len(climate.temperatures) == len(packed_graph.points)
+    assert len(climate.precipitation) == len(packed_graph.points)
+    
+    # Stage 7: Generate hydrology system
+    hydrology = Hydrology(packed_graph, packed_features, climate)
+    rivers = hydrology.generate_rivers()
+    
+    # Verify hydrology system
+    assert isinstance(rivers, dict)
+    # Should generate some rivers for realistic terrain
+    assert len(rivers) > 0
+    # Verify river data structure
+    for river_id, river_data in rivers.items():
+        assert hasattr(river_data, 'discharge')
+        assert hasattr(river_data, 'width')
+        assert hasattr(river_data, 'length')
+        assert hasattr(river_data, 'cells')
+        assert river_data.discharge >= 0
+        assert river_data.width >= 0
+        assert len(river_data.cells) > 0
+    
+    print(f"✓ Voronoi: {len(voronoi_graph.points)} cells generated")
+    print(f"✓ Heightmap: {heights.min()}-{heights.max()} height range")
+    print(f"✓ Features: {len(features.features)} features detected")
+    print(f"✓ Packed: {len(packed_graph.points)} cells after coastal enhancement")
+    print(f"✓ Climate: {len(climate.temperatures)} temperature points, {len(climate.precipitation)} precipitation points")
+    print(f"✓ Hydrology: {len(rivers)} rivers generated with realistic discharge values")
+    
+    return {
+        "voronoi_graph": voronoi_graph,
+        "packed_graph": packed_graph,
+        "features": features,
+        "packed_features": packed_features,
+        "climate": climate,
+        "rivers": rivers
+    }
 
 
 def main():
