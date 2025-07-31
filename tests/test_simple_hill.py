@@ -6,9 +6,9 @@ from py_fmg.core.heightmap_generator import HeightmapGenerator, HeightmapConfig
 
 # Small test
 WIDTH = 1200
-HEIGHT = 1000  
+HEIGHT = 1000
 CELLS_DESIRED = 10000
-SEED = "test-fix"
+SEED = "1234567"
 
 config = GridConfig(WIDTH, HEIGHT, CELLS_DESIRED)
 graph = generate_voronoi_graph(config, seed=SEED)

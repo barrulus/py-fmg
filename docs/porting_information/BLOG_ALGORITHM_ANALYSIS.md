@@ -1,6 +1,6 @@
-Of course. This is an excellent question because FMG's "blob spreading" is one of the most fundamental yet non-obvious algorithms in its entire generation pipeline. Its behavior is an emergent property of several interacting systems, not just a simple mathematical formula.
+# Blob Algorythm in detail
 
-Here is an extremely detailed explanation of how it works, what the math is, and how various factors influence it, based on the `addHill` function in `heightmap-generator.txt`.
+Here is an extremely detailed explanation of how it works, what the math is, and how various factors influence it, based on the `addHill` function in `heightmap-generator.js`.
 
 ### 1. High-Level Overview: What is Blob Spreading?
 
@@ -77,7 +77,7 @@ Because the decay can stall, the guard clause is the **only thing preventing a r
 
 #### C. The Role of the Termination Condition (`if (change[c] > 1)`)
 
-This is the final key to the puzzle, as you discovered. FMG's code has a specific order of operations: **calculate, store, then check the stored value.**
+FMG's code has a specific order of operations: **calculate, store, then check the stored value.**
 
 1.  `new_height_float` is calculated (e.g., `1.87`).
 2.  `change[neighbor]` is assigned `1.87`, which is stored as `1`.
@@ -91,4 +91,3 @@ This logic is what prevents the "wave of 1s." The moment the stored, truncated i
 *   **`blobPower`:** The single most important factor for spread distance. It's derived from `cellsDesired`. More cells = higher `blobPower` = wider blobs to ensure landmasses are an appropriate relative size.
 *   **Graph Topology:** In areas where cells have more neighbors (e.g., 7 or 8), the blob will spread faster and wider than in areas where cells have fewer neighbors (e.g., 5).
 *   **Randomness:** The `* (0.9 to 1.1)` factor primarily affects the *shape* and *irregularity* of the blob's edge. On average, its effect on spread distance is minimal, but it can cause lobes and inlets to form.
-
