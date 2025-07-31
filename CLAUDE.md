@@ -70,6 +70,7 @@ py_fmg/
 ├── core/          # Core algorithms ported from FMG
 │   ├── alea_prng.py         # Alea PRNG for FMG compatibility
 │   ├── cell_packing.py      # reGraph algorithm for performance
+│   ├── climate.py           # Temperature and precipitation calculations
 │   ├── features.py          # Geographic feature detection
 │   ├── heightmap_generator.py # Terrain generation algorithms
 │   └── voronoi_graph.py     # Voronoi diagram generation
@@ -99,6 +100,14 @@ py_fmg/
    - Ocean/land classification (height < 20)
    - Lake and coastline detection
    - Island identification
+   - Distance field calculation for coastlines
+
+5. **Climate System** (`climate.py`)
+   - Latitude-based temperature bands with tropical/temperate/polar zones
+   - Altitude temperature drop (6.5°C per 1km)
+   - Wind patterns by latitude (trade winds, westerlies, polar easterlies)
+   - Precipitation with orographic effects and rain shadows
+   - Moisture transport simulation
 
 ### Key Implementation Details
 
