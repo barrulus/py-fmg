@@ -22,6 +22,8 @@ All notable changes to py-fmg will be documented in this file.
   - `should_regenerate()` method on VoronoiGraph
   - `generate_or_reuse_grid()` function
   - Supports "keep land, reroll mountains" workflow
+- End-to-end test suite with seed-based reproducibility
+- Main pipeline API endpoint for complete map generation
 
 ### Changed
 - VoronoiGraph converted from immutable NamedTuple to mutable dataclass
@@ -34,6 +36,10 @@ All notable changes to py-fmg will be documented in this file.
 - Height array initialization matches FMG's pre-allocation behavior
 - Grid generation now properly tracks state for reuse detection
 - Cell connectivity building handles border cells correctly
+- Heightmap PRNG desynchronization resolved through fixed operation ordering
+- FMG blob spreading algorithm now accurately reproduces original behavior
+  - Proper handling of spreading patterns and edge cases
+  - Correct implementation of FMG's quirks in blob expansion
 
 ## [0.1.0] - Initial Release
 
