@@ -25,103 +25,74 @@ DEFAULT_SEED = "123456789"
 # This ensures deterministic results with the same PRNG sequence at each stage.
 
 
-def generate_voronoi_structure_debug(voronoi_graph, output_path, template_name, seed, packed_graph=None):
-    """Generate debug visualization showing Voronoi structure with and without boundary points."""
-    # Create figure with 2x2 or 2x3 subplots depending on whether packed_graph is provided
-    if packed_graph is not None:
-        fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(2, 3, figsize=(24, 16))
-    else:
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 16))
+
+
+def generate_packed_voronoi_debug(voronoi_graph, packed_graph, output_path, template_name, seed):
+    """Generate debug visualization showing packed/regraphed Voronoi results."""
+    from scipy.spatial import Voronoi, voronoi_plot_2d
+    
+    # Create figure with 2x2 subplots
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
     
     # Get dimensions
     width = voronoi_graph.graph_width
     height = voronoi_graph.graph_height
     
-    # Subplot 1: Grid points only
-    ax1.scatter(*voronoi_graph.points.T, s=30, alpha=0.8, label='Grid points')
+    # Subplot 1: Packed points colored by height
+    heights = packed_graph.heights
+    scatter = ax1.scatter(*packed_graph.points.T, c=heights, cmap='terrain', 
+                        s=30, alpha=0.8, vmin=0, vmax=100)
     ax1.set_xlim(0, width)
     ax1.set_ylim(0, height)
     ax1.set_aspect('equal')
-    ax1.set_title('Grid Points Only', fontsize=14)
-    ax1.legend()
+    ax1.set_title('Packed Points (Colored by Height)', fontsize=14)
+    plt.colorbar(scatter, ax=ax1, label='Height')
     
-    # Subplot 2: Grid + Boundary points
-    ax2.scatter(*voronoi_graph.points.T, s=30, alpha=0.8, label='Grid points')
-    ax2.scatter(*voronoi_graph.boundary_points.T, s=50, marker='x', 
-                color='red', alpha=0.8, label='Boundary points')
-    ax2.set_xlim(-50, width + 50)
-    ax2.set_ylim(-50, height + 50)
+    # Add water/land line
+    water_mask = heights < 20
+    land_mask = heights >= 20
+    ax1.scatter(*packed_graph.points[water_mask].T, c='blue', s=10, alpha=0.3, label='Water')
+    ax1.scatter(*packed_graph.points[land_mask].T, c='green', s=10, alpha=0.3, label='Land')
+    
+    # Subplot 2: Original vs Packed points
+    ax2.scatter(*voronoi_graph.points.T, s=5, alpha=0.3, label='Original points', color='gray')
+    ax2.scatter(*packed_graph.points.T, s=20, alpha=0.8, label='Packed points', color='red')
+    ax2.set_xlim(0, width)
+    ax2.set_ylim(0, height)
     ax2.set_aspect('equal')
-    ax2.set_title('Grid + Boundary Points', fontsize=14)
+    ax2.set_title('Original vs Packed Points', fontsize=14)
     ax2.legend()
     
-    # For Voronoi visualization, we need to use scipy
-    from scipy.spatial import Voronoi, voronoi_plot_2d
-    
-    # Subplot 3: Voronoi WITHOUT boundary points (shows infinite cells)
-    vor_no_boundary = Voronoi(voronoi_graph.points)
-    voronoi_plot_2d(vor_no_boundary, ax=ax3, show_vertices=False, 
-                    line_colors='blue', line_width=2, point_size=5)
+    # Subplot 3: Packed Voronoi
+    vor_packed = Voronoi(packed_graph.points)
+    voronoi_plot_2d(vor_packed, ax=ax3, show_vertices=False,
+                    line_colors='red', line_width=1.5, point_size=3)
     ax3.set_xlim(0, width)
     ax3.set_ylim(0, height)
-    ax3.set_title('Voronoi WITHOUT Boundary Points', fontsize=14)
+    ax3.set_title('Packed/Regraphed Voronoi (Coastal Enhancement)', fontsize=14)
     
-    # Subplot 4: Voronoi WITH boundary points (properly bounded)
-    all_points = np.vstack([voronoi_graph.points, voronoi_graph.boundary_points])
-    vor_with_boundary = Voronoi(all_points)
-    voronoi_plot_2d(vor_with_boundary, ax=ax4, show_vertices=False,
-                    line_colors='green', line_width=2, point_size=5)
-    ax4.set_xlim(0, width)
-    ax4.set_ylim(0, height)
-    ax4.set_title('Voronoi WITH Boundary Points', fontsize=14)
+    # Add coastline detection info
+    if hasattr(packed_graph, 'distance_field'):
+        coastal_cells = (packed_graph.distance_field == 1) | (packed_graph.distance_field == -1)
+        coastal_points = packed_graph.points[coastal_cells]
+        ax3.scatter(*coastal_points.T, c='yellow', s=50, alpha=0.8, 
+                   edgecolors='black', linewidths=1, label='Coastal cells')
+        ax3.legend()
     
-    # If packed_graph is provided, add visualizations for it
-    if packed_graph is not None:
-        # Subplot 3: Packed points colored by height
-        heights = packed_graph.heights
-        scatter = ax3.scatter(*packed_graph.points.T, c=heights, cmap='terrain', 
-                            s=30, alpha=0.8, vmin=0, vmax=100)
-        ax3.set_xlim(0, width)
-        ax3.set_ylim(0, height)
-        ax3.set_aspect('equal')
-        ax3.set_title('Packed Points (Colored by Height)', fontsize=14)
-        plt.colorbar(scatter, ax=ax3, label='Height')
-        
-        # Add water/land line
-        water_mask = heights < 20
-        land_mask = heights >= 20
-        ax3.scatter(*packed_graph.points[water_mask].T, c='blue', s=10, alpha=0.3, label='Water')
-        ax3.scatter(*packed_graph.points[land_mask].T, c='green', s=10, alpha=0.3, label='Land')
-        
-        # Subplot 5: Original vs Packed points
-        ax5.scatter(*voronoi_graph.points.T, s=5, alpha=0.3, label='Original points', color='gray')
-        ax5.scatter(*packed_graph.points.T, s=20, alpha=0.8, label='Packed points', color='red')
-        ax5.set_xlim(0, width)
-        ax5.set_ylim(0, height)
-        ax5.set_aspect('equal')
-        ax5.set_title('Original vs Packed Points', fontsize=14)
-        ax5.legend()
-        
-        # Subplot 6: Packed Voronoi
-        vor_packed = Voronoi(packed_graph.points)
-        voronoi_plot_2d(vor_packed, ax=ax6, show_vertices=False,
-                        line_colors='red', line_width=1.5, point_size=3)
-        ax6.set_xlim(0, width)
-        ax6.set_ylim(0, height)
-        ax6.set_title('Packed/Regraphed Voronoi (Coastal Enhancement)', fontsize=14)
-        
-        # Add coastline detection info
-        if hasattr(packed_graph, 'distance_field'):
-            coastal_cells = (packed_graph.distance_field == 1) | (packed_graph.distance_field == -1)
-            coastal_points = packed_graph.points[coastal_cells]
-            ax6.scatter(*coastal_points.T, c='yellow', s=50, alpha=0.8, 
-                       edgecolors='black', linewidths=1, label='Coastal cells')
-            ax6.legend()
+    # Subplot 4: Cell density comparison
+    ax4.bar(['Original', 'Packed'], [len(voronoi_graph.points), len(packed_graph.points)], 
+           color=['gray', 'red'], alpha=0.7)
+    ax4.set_ylabel('Number of Cells')
+    ax4.set_title('Cell Count Comparison', fontsize=14)
+    
+    # Add percentage labels
+    reduction_pct = ((len(voronoi_graph.points) - len(packed_graph.points)) / len(voronoi_graph.points)) * 100
+    ax4.text(1, len(packed_graph.points) + 100, f'{reduction_pct:+.1f}%', 
+            ha='center', va='bottom', fontweight='bold')
     
     # Add overall title
-    title = f'{template_name.title()} - Voronoi Structure (Seed: {seed})'
-    if packed_graph is not None:
-        title += f'\nOriginal: {len(voronoi_graph.points)} cells | Packed: {len(packed_graph.points)} cells'
+    title = f'{template_name.title()} - Packed Voronoi Analysis (Seed: {seed})'
+    title += f'\nOriginal: {len(voronoi_graph.points)} cells | Packed: {len(packed_graph.points)} cells'
     fig.suptitle(title, fontsize=16)
     
     plt.tight_layout()
@@ -283,12 +254,6 @@ def test_full_pipeline_with_visualization(template="atoll", seed=None, generate_
     assert voronoi_graph.cells_y > 0
     print(f"Generated {len(voronoi_graph.points)} Voronoi cells")
     
-    # Generate initial Voronoi structure debug image if requested
-    if generate_debug_images:
-        voronoi_debug_path = output_dir / f"voronoi_structure_{template}_{seed}_{timestamp}.png"
-        print("Generating initial Voronoi structure debug visualization...")
-        generate_voronoi_structure_debug(voronoi_graph, voronoi_debug_path, template, seed)
-        print(f"Initial Voronoi structure saved to {voronoi_debug_path}")
 
     # Stage 3: Generate heightmap
     print("Generating heightmap...")
@@ -349,8 +314,9 @@ def test_full_pipeline_with_visualization(template="atoll", seed=None, generate_
     if generate_debug_images:
         packed_voronoi_path = output_dir / f"voronoi_packed_{template}_{seed}_{timestamp}.png"
         print("Generating packed Voronoi structure debug visualization...")
-        generate_voronoi_structure_debug(voronoi_graph, packed_voronoi_path, template, seed, packed_graph)
+        generate_packed_voronoi_debug(voronoi_graph, packed_graph, packed_voronoi_path, template, seed)
         print(f"Packed Voronoi structure saved to {packed_voronoi_path}")
+    
 
     # Verify regraph results
     assert packed_graph is not None
@@ -502,7 +468,6 @@ def test_full_pipeline_with_visualization(template="atoll", seed=None, generate_
     }
     
     if generate_debug_images:
-        results["voronoi_debug_path"] = voronoi_debug_path
         results["heightmap_steps_path"] = heightmap_steps_path
         results["packed_voronoi_path"] = packed_voronoi_path
         
