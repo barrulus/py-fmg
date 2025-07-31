@@ -164,8 +164,14 @@ class Climate:
         n_cells = len(self.graph.points)
         self.precipitation = np.zeros(n_cells, dtype=np.uint8)
         
-        cells_x = self.graph.cells_x
-        cells_y = self.graph.cells_y
+        # Handle packed graphs that may not have cells_x/cells_y
+        if hasattr(self.graph, 'cells_x') and hasattr(self.graph, 'cells_y'):
+            cells_x = self.graph.cells_x
+            cells_y = self.graph.cells_y
+        else:
+            # Estimate grid dimensions for packed graphs
+            cells_x = int(np.sqrt(n_cells * 1.2))  # Slightly wider than square
+            cells_y = int(n_cells / cells_x) if cells_x > 0 else int(np.sqrt(n_cells))
         
         # Modifiers
         cells_number_modifier = (n_cells / 10000) ** 0.25
@@ -213,7 +219,8 @@ class Climate:
             if is_west:
                 westerly.append((c, lat_mod, wind_tier))
             if is_east:
-                easterly.append((c + cells_x - 1, lat_mod, wind_tier))
+                east_idx = min(c + cells_x - 1, n_cells - 1)  # Bound check
+                easterly.append((east_idx, lat_mod, wind_tier))
             if is_north:
                 northerly += 1
             if is_south:
@@ -232,14 +239,17 @@ class Climate:
             band_n = min(band_n, len(latitude_modifier) - 1)
             lat_mod_n = latitude_modifier[band_n] if self.map_coords.lat_t <= 60 else np.mean(latitude_modifier)
             max_prec_n = (northerly / vert_total) * 60 * modifier * lat_mod_n
-            self._pass_wind(list(range(0, cells_x)), max_prec_n, cells_x, cells_y)
+            north_range = list(range(0, min(cells_x, n_cells)))  # Bound check
+            self._pass_wind(north_range, max_prec_n, cells_x, cells_y)
             
         if southerly and vert_total > 0:
             band_s = int((abs(self.map_coords.lat_s) - 1) / 5)
             band_s = min(band_s, len(latitude_modifier) - 1)
             lat_mod_s = latitude_modifier[band_s] if self.map_coords.lat_t <= 60 else np.mean(latitude_modifier)
             max_prec_s = (southerly / vert_total) * 60 * modifier * lat_mod_s
-            self._pass_wind(list(range(n_cells - cells_x, n_cells)), max_prec_s, -cells_x, cells_y)
+            south_start = max(0, n_cells - cells_x)  # Bound check
+            south_range = list(range(south_start, n_cells))
+            self._pass_wind(south_range, max_prec_s, -cells_x, cells_y)
             
         # Store on graph
         self.graph.precipitation = self.precipitation
