@@ -344,6 +344,110 @@ def generate_voronoi_debug(voronoi_graph, output_path, template_name, seed):
     plt.close()
 
 
+def generate_heightmap_debug(packed_graph, output_path, template_name, seed):
+    """Generate debug visualization showing interpolated heightmap like a traditional topographic map."""
+    from scipy.interpolate import griddata
+    from matplotlib.colors import LinearSegmentedColormap
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Get dimensions
+    width = packed_graph.graph_width
+    height = packed_graph.graph_height
+    
+    # Create interpolated grid for smooth heightmap
+    grid_resolution = 600
+    xi = np.linspace(0, width, grid_resolution)
+    yi = np.linspace(0, height, grid_resolution)
+    xi, yi = np.meshgrid(xi, yi)
+    
+    # Interpolate heights from packed points
+    points_array = np.array(packed_graph.points)
+    zi = griddata(points_array, packed_graph.heights, (xi, yi), method="linear", fill_value=0)
+    
+    # Create custom terrain colormap
+    colors = [
+        (0.0, "#001a33"),  # Deep ocean
+        (0.1, "#003366"),  # Ocean
+        (0.19, "#0066cc"),  # Shallow water
+        (0.20, "#66b266"),  # Coast/grass
+        (0.35, "#99cc99"),  # Plains
+        (0.50, "#cccc99"),  # Hills
+        (0.65, "#cc9966"),  # Mountains
+        (0.80, "#996633"),  # High mountains
+        (1.0, "#ffffff"),  # Snow peaks
+    ]
+    cmap = LinearSegmentedColormap.from_list("terrain_custom", colors, N=100)
+    
+    # Plot interpolated heightmap
+    im = ax.imshow(
+        zi,
+        extent=(0, width, 0, height),
+        origin="lower",
+        cmap=cmap,
+        vmin=0,
+        vmax=100,
+        aspect="equal",
+        interpolation="bilinear",
+    )
+    
+    # Add contour lines for topographic effect
+    contours = ax.contour(
+        xi, yi, zi,
+        levels=np.arange(0, 101, 10),
+        colors="black",
+        linewidths=0.5,
+        alpha=0.3,
+    )
+    
+    # Highlight sea level
+    sea_contour = ax.contour(
+        xi, yi, zi, 
+        levels=[20], 
+        colors="navy", 
+        linewidths=2, 
+        alpha=0.8
+    )
+    
+    ax.set_xlim(0, width)
+    ax.set_ylim(0, height)
+    ax.set_title(f"{template_name.title()} - Interpolated Heightmap", fontsize=14)
+    
+    # Add colorbar
+    cbar = plt.colorbar(im, ax=ax, label="Height", shrink=0.8)
+    cbar.ax.axhline(y=20, color="blue", linewidth=2)
+    cbar.ax.text(1.5, 20, "Sea Level", rotation=0, va="center", fontsize=9)
+    
+    # Add height statistics
+    min_height = np.min(packed_graph.heights)
+    max_height = np.max(packed_graph.heights)
+    avg_height = np.mean(packed_graph.heights)
+    land_cells = np.sum(packed_graph.heights >= 20)
+    water_cells = np.sum(packed_graph.heights < 20)
+    land_pct = (land_cells / len(packed_graph.heights)) * 100
+    
+    ax.text(
+        0.02, 0.98,
+        f"Height: {min_height}-{max_height} (avg: {avg_height:.1f})\n"
+        f"Land: {land_cells:,} cells ({land_pct:.1f}%)\n"
+        f"Water: {water_cells:,} cells ({100-land_pct:.1f}%)\n"
+        f"Interpolated from {len(packed_graph.points):,} points",
+        transform=ax.transAxes,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+        fontsize=10,
+    )
+    
+    # Remove axis ticks for cleaner look
+    ax.set_xticks([])
+    ax.set_yticks([])
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+
 def generate_climate_debug(climate, packed_graph, output_path, template_name, seed):
     """Generate debug visualization showing temperature and precipitation."""
     from matplotlib.colors import LinearSegmentedColormap
@@ -679,8 +783,8 @@ def test_full_pipeline_with_visualization(
             output_dir / f"{template}_4_heightmap_{timestamp}.png"
         )
         print("Generating final heightmap visualization...")
-        generate_packed_voronoi_debug(
-            voronoi_graph, packed_graph, final_heightmap_path, template, seed
+        generate_heightmap_debug(
+            packed_graph, final_heightmap_path, template, seed
         )
         print(f"Final heightmap saved to {final_heightmap_path}")
 
