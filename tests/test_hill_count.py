@@ -9,7 +9,7 @@ from py_fmg.core.heightmap_generator import HeightmapGenerator, HeightmapConfig
 WIDTH = 1200
 HEIGHT = 1000
 CELLS_DESIRED = 10000
-SEED = "654321"  # Same as isthmus
+SEED = "123456789"
 
 config = GridConfig(WIDTH, HEIGHT, CELLS_DESIRED)
 graph = generate_voronoi_graph(config, seed=SEED)
@@ -68,8 +68,10 @@ for i in range(count):
     generator._add_one_hill("15-30", "0-30", "0-20")
     hill_calls = generator._prng.call_count - start_calls
     total_calls += hill_calls
-    
+
     cells_changed = np.sum(generator.heights > 0)
-    print(f"  Hill {i+1}: {hill_calls} PRNG calls, total cells with height: {cells_changed}")
+    print(
+        f"  Hill {i+1}: {hill_calls} PRNG calls, total cells with height: {cells_changed}"
+    )
 
 print(f"\nTotal PRNG calls for first Hill command: {total_calls + 1}")  # +1 for count

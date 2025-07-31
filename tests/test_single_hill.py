@@ -8,7 +8,7 @@ from py_fmg.core.heightmap_generator import HeightmapGenerator, HeightmapConfig
 WIDTH = 1200
 HEIGHT = 1000
 CELLS_DESIRED = 10000
-SEED = "test-single-hill"
+SEED = "123456789"
 
 # Generate graph
 config = GridConfig(WIDTH, HEIGHT, CELLS_DESIRED)
@@ -45,23 +45,23 @@ for count, height, range_x, range_y in test_cases:
     generator = HeightmapGenerator(heightmap_config, graph, seed=SEED)
     prng = generator._prng
     prng.call_count = 0
-    
+
     generator.add_hill(count, height, range_x, range_y)
-    
+
     calls = prng.call_count
     land = sum(1 for h in generator.heights if h > 20)
     land_pct = land / len(generator.heights) * 100
-    
+
     print(f"\nTest: count={count}, height={height}")
     print(f"  PRNG calls: {calls}")
     print(f"  Land: {land_pct:.1f}%")
-    
+
     # Check specific call patterns
     if count == "1" and height == "50":
         print("\nDetailed analysis for single fixed hill:")
         # We expect:
         # 1. _get_number_in_range for count (0 calls if "1")
-        # 2. _get_number_in_range for height (0 calls if "50") 
+        # 2. _get_number_in_range for height (0 calls if "50")
         # 3. _get_point_in_range for x (1 call)
         # 4. _get_point_in_range for y (1 call)
         # 5. Blob spreading (many calls)

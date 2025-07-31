@@ -9,7 +9,7 @@ from py_fmg.core.heightmap_generator import HeightmapGenerator, HeightmapConfig
 WIDTH = 1200
 HEIGHT = 1000
 CELLS_DESIRED = 10000
-SEED = "test-pit"
+SEED = "123456"
 
 config = GridConfig(WIDTH, HEIGHT, CELLS_DESIRED)
 graph = generate_voronoi_graph(config, seed=SEED)
@@ -43,16 +43,18 @@ prng.call_count = 0
 for i in range(5):
     # Reset heights
     generator.heights = np.full(generator.n_cells, 50.0, dtype=np.float32)
-    
+
     start_calls = prng.call_count
     generator._add_one_pit("20-30", "40-60", "40-60")
     pit_calls = prng.call_count - start_calls
-    
+
     # Count cells affected (those with height < 50)
     cells_affected = np.sum(generator.heights < 50)
     min_height = np.min(generator.heights)
-    
-    print(f"Pit {i+1}: {pit_calls} PRNG calls, {cells_affected} cells affected, min height: {min_height:.1f}")
+
+    print(
+        f"Pit {i+1}: {pit_calls} PRNG calls, {cells_affected} cells affected, min height: {min_height:.1f}"
+    )
 
 print("\n\nComparison:")
 print("-" * 50)
@@ -64,7 +66,9 @@ print("\n\nTesting trough command from isthmus template:")
 print("-" * 50)
 
 # Reset for isthmus test
-generator = HeightmapGenerator(heightmap_config, graph, seed="654321")  # Same seed as isthmus
+generator = HeightmapGenerator(
+    heightmap_config, graph, seed="654321"
+)  # Same seed as isthmus
 prng = generator._prng
 prng.call_count = 0
 generator.heights = np.full(generator.n_cells, 50.0, dtype=np.float32)
@@ -81,7 +85,9 @@ for i in range(count):
     total_trough_calls += trough_calls
     print(f"  Trough {i+1}: {trough_calls} PRNG calls")
 
-print(f"\nTotal PRNG calls for trough command: {total_trough_calls + 1}")  # +1 for count
+print(
+    f"\nTotal PRNG calls for trough command: {total_trough_calls + 1}"
+)  # +1 for count
 
 print("\n\nAnalysis:")
 print("-" * 50)
