@@ -5,3 +5,4 @@ __pycache__/
 fmg/
 debug_archive/
 debug/
+.DS_Store
