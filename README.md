@@ -1,6 +1,6 @@
 # Python Fantasy Map Generator (py-fmg)
 
-A headless procedural map generation service created by porting the world-generation algorithms from Azgaar's Fantasy Map Generator (FMG) into a standalone Python application. This service leverages Python's premier geospatial libraries to store generated map data in a PostGIS-enabled PostgreSQL database, designed specifically for use by procedural Role-Playing Games (RPGs).
+A headless procedural map generation service created by porting the world-generation algorithms from [Azgaar's Fantasy Map Generator (FMG)](https://github.com/Azgaar/Fantasy-Map-Generator) into a standalone Python application. This service leverages Python's premier geospatial libraries to store generated map data in a PostGIS-enabled PostgreSQL database, designed specifically for use by procedural Role-Playing Games (RPGs).
 
 ## Project Vision
 
