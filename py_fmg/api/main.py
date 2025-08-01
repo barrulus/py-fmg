@@ -364,6 +364,8 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
 
         # Stage 6: Generate climate (60% progress)
         logger.info("Generating climate", job_id=job_id)
+        # Note: Climate uses ClimateOptions with sensible defaults
+        # For custom climate parameters, pass ClimateOptions() with desired settings
         climate = Climate(packed_graph)
         climate.calculate_temperatures()
         climate.generate_precipitation()
