@@ -10,6 +10,7 @@ This module implements the full FMG religion system with:
 
 from __future__ import annotations
 
+import colorsys
 import heapq
 import math
 from dataclasses import dataclass, field
@@ -210,7 +211,7 @@ class ReligionGenerator:
             religion = Religion(
                 id=self.next_religion_id,
                 name="",  # Will be generated after form is set
-                color=self._generate_religion_color(parent_culture),
+                color=self._generate_religion_color(parent_culture, religion_type),
                 type=religion_type,
                 form=self.prng.choice(forms),
                 culture_id=parent_culture_id,
@@ -640,30 +641,131 @@ class ReligionGenerator:
         else:
             return religion.name[:4].upper()
 
-    def _generate_religion_color(self, parent_culture) -> str:
-        """Generate color for organized religion based on parent culture."""
-        # Mix parent culture color with base religion colors
+    def _generate_religion_color(self, parent_culture, religion_type: str = "Organized") -> str:
+        """
+        Generate color for religion based on parent culture using color theory.
+        
+        Different religion types get different mixing parameters:
+        - Folk: Uses pure culture color
+        - Organized: Mixed with base colors, moderate brightness
+        - Cult: Mixed with more variation, darker
+        - Heresy: Mixed with culture color, less brightness variation
+        """
+        # Folk religions use pure culture color
+        if religion_type == "Folk":
+            return parent_culture.color
+            
+        # Get base color for mixing
         base_color = self.prng.choice(self.religion_colors)
-
-        # Simple color mixing (would be more sophisticated in full implementation)
+        
         try:
-            # Extract RGB components
-            base_r = int(base_color[1:3], 16)
-            base_g = int(base_color[3:5], 16)
-            base_b = int(base_color[5:7], 16)
-
-            culture_r = int(parent_culture.color[1:3], 16)
-            culture_g = int(parent_culture.color[3:5], 16)
-            culture_b = int(parent_culture.color[5:7], 16)
-
-            # Mix colors (70% base, 30% culture)
-            mixed_r = int(0.7 * base_r + 0.3 * culture_r)
-            mixed_g = int(0.7 * base_g + 0.3 * culture_g)
-            mixed_b = int(0.7 * base_b + 0.3 * culture_b)
-
-            return f"#{mixed_r:02x}{mixed_g:02x}{mixed_b:02x}"
+            # Type-specific mixing parameters based on FMG's approach
+            if religion_type == "Heresy":
+                # Heresy: close to culture color with subtle variation
+                return self._mix_colors_advanced(
+                    parent_culture.color, 
+                    base_color, 
+                    culture_weight=0.65,  # More culture influence
+                    brightness_variation=0.2  # Less brightness change
+                )
+            elif religion_type == "Cult":
+                # Cult: more dramatic departure, often darker
+                return self._mix_colors_advanced(
+                    parent_culture.color, 
+                    base_color, 
+                    culture_weight=0.5,   # Balanced mix
+                    brightness_variation=0.0  # No brightness boost
+                )
+            else:  # Organized
+                # Organized: moderate mixing with brightness boost
+                return self._mix_colors_advanced(
+                    parent_culture.color, 
+                    base_color, 
+                    culture_weight=0.25,  # Less culture influence
+                    brightness_variation=0.4  # More brightness variation
+                )
         except (ValueError, IndexError):
             return base_color
+
+    def _hex_to_rgb(self, hex_color: str) -> Tuple[float, float, float]:
+        """Convert hex color to RGB values (0-1 range)."""
+        if hex_color.startswith('#'):
+            hex_color = hex_color[1:]
+        
+        r = int(hex_color[0:2], 16) / 255.0
+        g = int(hex_color[2:4], 16) / 255.0
+        b = int(hex_color[4:6], 16) / 255.0
+        
+        return r, g, b
+
+    def _rgb_to_hex(self, r: float, g: float, b: float) -> str:
+        """Convert RGB values (0-1 range) to hex color."""
+        r = max(0, min(255, int(r * 255)))
+        g = max(0, min(255, int(g * 255)))
+        b = max(0, min(255, int(b * 255)))
+        
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    def _mix_colors_advanced(self, color1: str, color2: str, culture_weight: float = 0.3, 
+                           brightness_variation: float = 0.3) -> str:
+        """
+        Mix two colors using HSV color space for better visual harmony.
+        
+        Based on FMG's getMixedColor but enhanced with color theory:
+        - Uses HSV space for hue preservation
+        - Maintains color harmony while providing variation
+        - Avoids muddy RGB mixing results
+        
+        Args:
+            color1: First color (culture color)
+            color2: Second color (base religion color)  
+            culture_weight: How much of culture color to preserve (0-1)
+            brightness_variation: Brightness adjustment (-1 to 1)
+            
+        Returns:
+            Mixed color as hex string
+        """
+        # Convert to RGB
+        r1, g1, b1 = self._hex_to_rgb(color1)
+        r2, g2, b2 = self._hex_to_rgb(color2)
+        
+        # Convert to HSV for better color mixing
+        h1, s1, v1 = colorsys.rgb_to_hsv(r1, g1, b1)
+        h2, s2, v2 = colorsys.rgb_to_hsv(r2, g2, b2)
+        
+        # Mix hues with special handling for wraparound
+        hue_diff = abs(h1 - h2)
+        if hue_diff > 0.5:  # Handle hue wraparound (e.g., red to purple)
+            # Choose the shorter path around the color wheel
+            if h1 > h2:
+                h2 += 1.0
+            else:
+                h1 += 1.0
+        
+        mixed_hue = (h1 * culture_weight + h2 * (1 - culture_weight)) % 1.0
+        
+        # Mix saturation and value (brightness)
+        mixed_saturation = s1 * culture_weight + s2 * (1 - culture_weight)
+        mixed_value = v1 * culture_weight + v2 * (1 - culture_weight)
+        
+        # Apply brightness variation similar to FMG's .brighter() function
+        if brightness_variation > 0:
+            # Brighten: increase value and decrease saturation slightly
+            mixed_value = min(1.0, mixed_value * (1 + brightness_variation))
+            mixed_saturation = max(0.1, mixed_saturation * (1 - brightness_variation * 0.2))
+        elif brightness_variation < 0:
+            # Darken: decrease value and increase saturation slightly  
+            mixed_value = max(0.1, mixed_value * (1 + brightness_variation))
+            mixed_saturation = min(1.0, mixed_saturation * (1 - brightness_variation * 0.2))
+        
+        # Add slight random variation for uniqueness (like FMG's random mixing)
+        hue_variation = (self.prng.random() - 0.5) * 0.05  # Small hue shift
+        mixed_hue = (mixed_hue + hue_variation) % 1.0
+        
+        # Convert back to RGB
+        mixed_r, mixed_g, mixed_b = colorsys.hsv_to_rgb(mixed_hue, mixed_saturation, mixed_value)
+        
+        return self._rgb_to_hex(mixed_r, mixed_g, mixed_b)
 
     def assign_temples_to_settlements(self, settlements_dict: Dict) -> None:
         """Assign temples to settlements based on religion and population."""
