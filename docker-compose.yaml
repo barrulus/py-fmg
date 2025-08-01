@@ -5,11 +5,11 @@ services:
     build: .
     container_name: py-fmg-app
     ports:
-      - "8000:8000"
+      - "9888:8000"
     volumes:
       - .:/app
     env_file:
-      - .env
+      - .env # add db URL case dockerbuild
     depends_on:
       - db
 
