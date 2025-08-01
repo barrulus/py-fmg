@@ -32,6 +32,11 @@ class HydrologyOptions:
     meandering_factor: float = 0.5  # Base factor for river meandering
     width_scale_factor: float = 1.0  # Scale factor for river width calculation
 
+    # Enhanced hydraulic parameters
+    manning_n: float = 0.035  # Manning's roughness coefficient (natural channels)
+    depth_width_ratio: float = 0.1  # Typical depth/width ratio for rivers
+    min_slope: float = 0.0001  # Minimum slope to prevent division by zero
+
 
 @dataclass
 class RiverData:
@@ -134,18 +139,18 @@ class Hydrology:
             if self.graph.heights[i] >= self.options.sea_level:
                 # Primary variation based on distance to water
                 distance_variation = self.graph.distance_field[i] / 100.0
-                
+
                 # Secondary variation based on mean of neighbor distances
                 neighbors = self._get_neighbors(i)
                 if neighbors:
-                    neighbor_distances = [self.graph.distance_field[n] for n in neighbors 
+                    neighbor_distances = [self.graph.distance_field[n] for n in neighbors
                                         if n < len(self.graph.distance_field)]
                     mean_neighbor_distance = np.mean(neighbor_distances) if neighbor_distances else 0
                 else:
                     mean_neighbor_distance = 0
-                
+
                 neighbor_variation = mean_neighbor_distance / 10000.0
-                
+
                 # Apply both variations
                 self.graph.heights[i] += distance_variation + neighbor_variation
 
@@ -162,10 +167,10 @@ class Hydrology:
         max_iterations = self.options.max_depression_iterations
         check_lake_max_iteration = int(max_iterations * 0.85)
         elevate_lake_max_iteration = int(max_iterations * 0.75)
-        
+
         # Helper function to get height of lake or cell (matches FMG's height function)
         def height(i: int) -> float:
-            if (hasattr(self.features, 'feature_ids') and 
+            if (hasattr(self.features, 'feature_ids') and
                 self.features.feature_ids is not None and
                 i < len(self.features.feature_ids)):
                 feature_id = self.features.feature_ids[i]
@@ -175,26 +180,26 @@ class Hydrology:
                             if hasattr(feature, 'height') and feature.height is not None:
                                 return feature.height
             return self.graph.heights[i]
-        
+
         # Get lakes and land cells
         lakes = []
         if hasattr(self.features, 'features'):
             lakes = [f for f in self.features.features if f and hasattr(f, 'type') and f.type == "lake"]
-        
+
         # Get land cells excluding near-border cells
         land = []
         for i in range(len(self.graph.heights)):
             if self.graph.heights[i] >= self.options.sea_level and not self.graph.cell_border_flags[i]:
                 land.append(i)
-        
+
         # Sort land cells by height (lowest first)
         land.sort(key=lambda i: self.graph.heights[i])
-        
+
         # Track progress for bad convergence detection
         progress = []
         depressions = float('inf')
         prev_depressions = None
-        
+
         for iteration in range(max_iterations):
             # Check for bad progress (matches FMG logic)
             if len(progress) > 5 and sum(progress) > 0:
@@ -203,15 +208,15 @@ class Hydrology:
                 depressions = progress[0] if progress else 0
                 logger.warning("Bad progress detected, reverting heights")
                 break
-            
+
             depressions = 0
-            
+
             # Process lakes (only in early iterations)
             if iteration < check_lake_max_iteration:
                 for lake in lakes:
                     if hasattr(lake, 'closed') and lake.closed:
                         continue
-                    
+
                     # Get lake shoreline cells
                     shoreline = []
                     if hasattr(lake, 'shoreline'):
@@ -221,24 +226,24 @@ class Hydrology:
                         for i in range(len(self.features.feature_ids)):
                             if self.features.feature_ids[i] == lake.id:
                                 for neighbor in self._get_neighbors(i):
-                                    if (neighbor < len(self.features.feature_ids) and 
+                                    if (neighbor < len(self.features.feature_ids) and
                                         self.features.feature_ids[neighbor] != lake.id and
                                         self.graph.heights[neighbor] >= self.options.sea_level):
                                         if neighbor not in shoreline:
                                             shoreline.append(neighbor)
                         lake.shoreline = shoreline
-                    
+
                     if not shoreline:
                         continue
-                    
+
                     # Find minimum shoreline height
                     min_height = min(self.graph.heights[s] for s in shoreline)
-                    
+
                     # Check if lake needs elevation
                     lake_height = lake.height if hasattr(lake, 'height') and lake.height is not None else 0
                     if min_height >= 100 or lake_height > min_height:
                         continue
-                    
+
                     # Handle lake elevation or closure
                     if iteration > elevate_lake_max_iteration:
                         # Restore original heights and close lake
@@ -248,36 +253,36 @@ class Hydrology:
                         lake.height = min(self.graph.heights[s] for s in shoreline) - 1
                         lake.closed = True
                         continue
-                    
+
                     depressions += 1
                     lake.height = min_height + 0.2
-            
+
             # Process land cells
             for i in land:
                 # Get minimum neighbor height (using height function for lakes)
                 neighbor_heights = [height(c) for c in self._get_neighbors(i)]
                 if not neighbor_heights:
                     continue
-                    
+
                 min_height = min(neighbor_heights)
-                
+
                 # Check if cell is depressed (lower than lowest neighbor)
                 if min_height >= 100 or self.graph.heights[i] > min_height:
                     continue
-                
+
                 depressions += 1
                 self.graph.heights[i] = min_height + 0.1
-            
+
             # Track progress
             if prev_depressions is not None:
                 progress.append(depressions - prev_depressions)
             prev_depressions = depressions
-            
+
             # Check if converged
             if depressions == 0:
                 logger.info(f"Depression resolution converged after {iteration + 1} iterations")
                 break
-        
+
         if depressions > 0:
             logger.warning(f"Unresolved depressions: {depressions}. Edit heightmap to fix")
 
@@ -338,32 +343,32 @@ class Hydrology:
             Dictionary mapping outlet cell IDs to list of lakes that drain through them
         """
         lake_out_cells = {}
-        
+
         if not hasattr(self.features, 'features'):
             return lake_out_cells
-        
+
         # Process each lake feature
         for feature in self.features.features:
             if not feature or not hasattr(feature, 'type') or feature.type != "lake":
                 continue
-            
+
             # Get lake cells
             lake_cells = []
             if hasattr(self.features, 'feature_ids') and self.features.feature_ids is not None:
                 for i, fid in enumerate(self.features.feature_ids):
                     if fid == feature.id:
                         lake_cells.append(i)
-            
+
             if not lake_cells:
                 continue
-            
+
             # Calculate lake properties
             # Note: In FMG, flux is accumulated during the main loop, but we pre-calculate area/evaporation
             lake_area = len(lake_cells)
             feature.area = lake_area
             feature.evaporation = lake_area * 2.0  # Simplified evaporation rate
             feature.flux = 0  # Will be accumulated during main loop
-            
+
             # Find outlet cell
             outlet_cell = self._find_lake_outlet(feature, lake_cells)
             if outlet_cell is not None:
@@ -372,7 +377,7 @@ class Hydrology:
                 if outlet_cell not in lake_out_cells:
                     lake_out_cells[outlet_cell] = []
                 lake_out_cells[outlet_cell].append(feature)
-        
+
         return lake_out_cells
 
     def _find_lake_outlet(self, lake_feature, lake_cells: List[int]) -> Optional[int]:
@@ -414,20 +419,20 @@ class Hydrology:
         """
         # Calculate cells number modifier for precipitation scaling
         cells_number_modifier = (len(self.graph.points) / 10000) ** 0.25
-        
+
         # Process land cells in height order (highest first) - matches FMG exactly
         land_cells = []
         for i in range(len(self.graph.heights)):
             if self.graph.heights[i] >= self.options.sea_level:
                 land_cells.append(i)
-        
+
         # Sort by height - highest first (matches FMG's land.sort((a, b) => h[b] - h[a]))
         land_cells.sort(key=lambda i: self.graph.heights[i], reverse=True)
 
         for cell_id in land_cells:
             # Step 1: Add precipitation flux to this cell
-            if (hasattr(self.climate, 'precipitation') and 
-                hasattr(self.graph, 'grid_indices') and 
+            if (hasattr(self.climate, 'precipitation') and
+                hasattr(self.graph, 'grid_indices') and
                 self.graph.grid_indices is not None):
                 # Use grid mapping to access original climate data
                 grid_cell_id = self.graph.grid_indices[cell_id]
@@ -441,9 +446,9 @@ class Hydrology:
                     precip = self.climate.precipitation.get(cell_id, 50.0)
                 else:
                     precip = self.climate.precipitation[cell_id] if cell_id < len(self.climate.precipitation) else 50.0
-            
+
             self.flux[cell_id] += precip / cells_number_modifier
-            
+
             # Step 2: Check if this cell is a lake outlet
             if cell_id in lake_out_cells:
                 # Process each lake that drains through this outlet
@@ -462,22 +467,22 @@ class Hydrology:
                                 self.features.feature_ids[neighbor_id] == lake.id):
                                 lake_cell = neighbor_id
                                 break
-                        
+
                         if lake_cell is not None:
                             # Add excess lake water to the lake cell
                             excess_water = max(lake.flux - lake.evaporation, 0)
                             self.flux[lake_cell] += excess_water
-                            
+
                             # Handle river creation/assignment for lake (matches FMG logic)
                             if self.river_ids[lake_cell] != 0:
                                 # Check if we should keep existing river identity
                                 lake_river = self.river_ids[lake_cell]
                                 same_river = any(
-                                    self.river_ids[n] == lake_river 
+                                    self.river_ids[n] == lake_river
                                     for n in self._get_neighbors(lake_cell)
                                     if n < len(self.river_ids)
                                 )
-                                
+
                                 if not same_river:
                                     # Create new river for lake
                                     self.river_ids[lake_cell] = self.next_river_id
@@ -490,13 +495,13 @@ class Hydrology:
                                 self.rivers[self.next_river_id] = RiverData(id=self.next_river_id)
                                 self.rivers[self.next_river_id].cells.append(lake_cell)
                                 self.next_river_id += 1
-                            
+
                             # Set lake outlet river
                             lake.outlet = self.river_ids[lake_cell]
-                            
+
                             # Flow lake water downstream
                             self._flow_down(cell_id, self.flux[lake_cell], lake.outlet)
-                        
+
                 # Handle tributary assignment (matches FMG)
                 if lakes:
                     outlet = lakes[0].outlet if hasattr(lakes[0], 'outlet') else None
@@ -505,14 +510,14 @@ class Hydrology:
                             for inlet in lake.inlets:
                                 if inlet in self.rivers and outlet:
                                     self.rivers[inlet].parent_id = outlet
-            
+
             # Step 3: Handle near-border cells
             if self.graph.cell_border_flags[cell_id] and self.river_ids[cell_id] > 0:
                 # Add border cell (-1) to river
                 if self.river_ids[cell_id] in self.rivers:
                     self.rivers[self.river_ids[cell_id]].cells.append(-1)
                 continue
-            
+
             # Step 4: Find downhill flow target
             # Special handling for lake outlet cells - exclude lake cells from targets
             if cell_id in lake_out_cells:
@@ -521,23 +526,23 @@ class Hydrology:
                 target_cell = self._find_flow_target_excluding_lakes(cell_id, lake_ids)
             else:
                 target_cell = self._find_flow_target(cell_id)
-                
+
             if target_cell is None:
                 continue  # No downhill flow possible
-            
+
             # Check if cell is actually depressed (FMG logic)
             if self.graph.heights[cell_id] <= self.graph.heights[target_cell]:
                 continue
-            
+
             # Step 5: Handle flux transfer based on amount
             cell_flux = self.flux[cell_id]
-            
+
             if cell_flux < self.options.min_river_flux:
                 # Below river threshold - just transfer flux
                 if self.graph.heights[target_cell] >= self.options.sea_level:
                     self.flux[target_cell] += cell_flux
                 continue
-            
+
             # Above river threshold - create/extend river
             if self.river_ids[cell_id] == 0:
                 # Create new river
@@ -548,7 +553,7 @@ class Hydrology:
                 self.rivers[river_id].cells.append(cell_id)
             else:
                 river_id = self.river_ids[cell_id]
-            
+
             # Flow water downstream using FMG's flowDown logic
             self._flow_down(target_cell, cell_flux, river_id)
 
@@ -568,7 +573,7 @@ class Hydrology:
                 target_cell = neighbor_id
 
         return target_cell
-    
+
     def _find_flow_target_excluding_lakes(self, cell_id: int, lake_ids: List[int]) -> Optional[int]:
         """Find the lowest neighbor to flow water to, excluding cells in specified lakes."""
         neighbors = self._get_neighbors(cell_id)
@@ -580,16 +585,16 @@ class Hydrology:
         for neighbor_id in neighbors:
             # Check if neighbor belongs to any excluded lake
             in_excluded_lake = False
-            if (hasattr(self.features, 'feature_ids') and 
+            if (hasattr(self.features, 'feature_ids') and
                 self.features.feature_ids is not None and
                 neighbor_id < len(self.features.feature_ids)):
                 feature_id = self.features.feature_ids[neighbor_id]
                 if feature_id in lake_ids:
                     in_excluded_lake = True
-            
+
             if not in_excluded_lake:
                 filtered_neighbors.append(neighbor_id)
-        
+
         if not filtered_neighbors:
             return None
 
@@ -661,7 +666,7 @@ class Hydrology:
         # Get current flux and river for target cell
         to_flux = self.flux[to_cell] - self.confluences[to_cell].astype(float).sum() if hasattr(self.confluences[to_cell], 'sum') else (self.flux[to_cell] - (1.0 if self.confluences[to_cell] else 0.0))
         to_river_id = self.river_ids[to_cell]
-        
+
         if to_river_id > 0:
             # Handle river confluence - FMG logic
             if from_flux > to_flux:
@@ -680,7 +685,7 @@ class Hydrology:
         else:
             # Assign river to new cell
             self.river_ids[to_cell] = river_id
-        
+
         # CRITICAL: Accumulate flux downstream if on land
         if self.graph.heights[to_cell] >= self.options.sea_level:
             self.flux[to_cell] += from_flux
@@ -704,7 +709,7 @@ class Hydrology:
                                     if river_id not in feature.inlets:
                                         feature.inlets.append(river_id)
                                 break
-        
+
         # Add cell to river
         if river_id in self.rivers:
             self.rivers[river_id].cells.append(to_cell)
@@ -712,17 +717,17 @@ class Hydrology:
     def define_rivers(self) -> None:
         """Define final river properties including width, length, and discharge."""
         logger.info("Defining river properties")
-        
+
         # Filter out tiny rivers (less than 3 cells) to match FMG
         rivers_to_remove = []
         for river_id, river in self.rivers.items():
             if len(river.cells) < 3:
                 rivers_to_remove.append(river_id)
-        
+
         # Remove tiny rivers
         for river_id in rivers_to_remove:
             del self.rivers[river_id]
-        
+
         logger.info(f"Filtered out {len(rivers_to_remove)} tiny rivers")
 
         for river_id, river in self.rivers.items():
@@ -733,8 +738,8 @@ class Hydrology:
             mouth_cell = river.cells[-1]
             river.discharge = self.flux[mouth_cell]
 
-            # Calculate width based on discharge
-            river.width = self._calculate_river_width(river.discharge)
+            # Calculate width based on discharge and slope
+            river.width = self._calculate_river_width(river.discharge, river.cells)
 
             # Calculate approximate length
             river.length = self._calculate_river_length(river.cells)
@@ -743,15 +748,89 @@ class Hydrology:
             if river.cells:
                 river.source_distance = self._calculate_source_distance(river.cells)
 
-    def _calculate_river_width(self, discharge: float) -> float:
-        """Calculate river width based on discharge."""
+    def _calculate_river_width(self, discharge: float, river_cells: Optional[List[int]] = None) -> float:
+        """
+        Calculate river width using hydraulic formulas.
+        
+        Uses a combination of:
+        1. Empirical width-discharge relationship
+        2. Manning's equation considerations for slope effects
+        3. Channel geometry assumptions
+        
+        Args:
+            discharge: River discharge (flow rate)
+            river_cells: Optional list of river cells for slope calculation
+            
+        Returns:
+            River width in map units
+        """
         if discharge <= 0:
             return 0.0
 
-        # Width calculation based on FMG's formula
-        # Simplified: width scales with square root of discharge
-        base_width = math.sqrt(discharge) * self.options.width_scale_factor
-        return max(base_width, 1.0)  # Minimum width of 1
+        # Calculate average slope if river cells are provided
+        slope = self.options.min_slope  # Default minimum slope
+        if river_cells and len(river_cells) >= 2:
+            slope = max(self._calculate_average_slope(river_cells), self.options.min_slope)
+
+        # Empirical width-discharge relationship (Leopold & Maddock, 1953)
+        # W = a * Q^b, where a ≈ 2.3, b ≈ 0.5 for natural channels
+        empirical_width = 2.3 * (discharge ** 0.5)
+
+        # Adjust for slope using Manning's equation principles
+        # Steeper slopes → narrower, deeper channels
+        # Gentler slopes → wider, shallower channels
+        slope_factor = (self.options.min_slope / slope) ** 0.2  # Gentle adjustment
+
+        # Apply roughness coefficient influence
+        # Higher roughness → wider channels to maintain flow
+        roughness_factor = (self.options.manning_n / 0.035) ** 0.1
+
+        # Combine factors
+        hydraulic_width = empirical_width * slope_factor * roughness_factor
+
+        # Apply original scale factor for compatibility
+        final_width = hydraulic_width * self.options.width_scale_factor
+
+        return max(final_width, 1.0)  # Minimum width of 1
+
+    def _calculate_average_slope(self, river_cells: List[int]) -> float:
+        """
+        Calculate average slope along a river path.
+        
+        Args:
+            river_cells: List of cell IDs forming the river path
+            
+        Returns:
+            Average slope as elevation change per unit distance
+        """
+        if len(river_cells) < 2:
+            return self.options.min_slope
+
+        total_elevation_drop = 0.0
+        total_distance = 0.0
+
+        for i in range(len(river_cells) - 1):
+            cell1 = river_cells[i]
+            cell2 = river_cells[i + 1]
+
+            # Calculate elevation difference
+            elev1 = self.graph.heights[cell1]
+            elev2 = self.graph.heights[cell2]
+            elevation_drop = abs(elev1 - elev2)
+
+            # Calculate distance between cells
+            point1 = self.graph.points[cell1]
+            point2 = self.graph.points[cell2]
+            distance = math.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
+
+            if distance > 0:
+                total_elevation_drop += elevation_drop
+                total_distance += distance
+
+        if total_distance > 0:
+            return total_elevation_drop / total_distance
+        else:
+            return self.options.min_slope
 
     def _calculate_river_length(self, cells: List[int]) -> float:
         """Calculate approximate river length with meandering."""
