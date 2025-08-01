@@ -71,3 +71,9 @@ class AleaPRNG:
         self.c = int(t)
         self.s2 = t - self.c
         return self.s2
+    
+    def choice(self, seq):
+        """Choose a random element from a non-empty sequence."""
+        if not seq:
+            raise IndexError('Cannot choose from an empty sequence')
+        return seq[int(self.random() * len(seq))]
