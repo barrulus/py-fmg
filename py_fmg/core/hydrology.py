@@ -514,7 +514,14 @@ class Hydrology:
                 continue
             
             # Step 4: Find downhill flow target
-            target_cell = self._find_flow_target(cell_id)
+            # Special handling for lake outlet cells - exclude lake cells from targets
+            if cell_id in lake_out_cells:
+                # Get all lake feature IDs for this outlet
+                lake_ids = [lake.id for lake in lake_out_cells[cell_id]]
+                target_cell = self._find_flow_target_excluding_lakes(cell_id, lake_ids)
+            else:
+                target_cell = self._find_flow_target(cell_id)
+                
             if target_cell is None:
                 continue  # No downhill flow possible
             
@@ -555,6 +562,42 @@ class Hydrology:
         target_cell = None
 
         for neighbor_id in neighbors:
+            neighbor_height = self.graph.heights[neighbor_id]
+            if neighbor_height < lowest_height:
+                lowest_height = neighbor_height
+                target_cell = neighbor_id
+
+        return target_cell
+    
+    def _find_flow_target_excluding_lakes(self, cell_id: int, lake_ids: List[int]) -> Optional[int]:
+        """Find the lowest neighbor to flow water to, excluding cells in specified lakes."""
+        neighbors = self._get_neighbors(cell_id)
+        if not neighbors:
+            return None
+
+        # Filter out neighbors that belong to any of the specified lakes
+        filtered_neighbors = []
+        for neighbor_id in neighbors:
+            # Check if neighbor belongs to any excluded lake
+            in_excluded_lake = False
+            if (hasattr(self.features, 'feature_ids') and 
+                self.features.feature_ids is not None and
+                neighbor_id < len(self.features.feature_ids)):
+                feature_id = self.features.feature_ids[neighbor_id]
+                if feature_id in lake_ids:
+                    in_excluded_lake = True
+            
+            if not in_excluded_lake:
+                filtered_neighbors.append(neighbor_id)
+        
+        if not filtered_neighbors:
+            return None
+
+        # Find lowest among filtered neighbors
+        lowest_height = self.graph.heights[cell_id]
+        target_cell = None
+
+        for neighbor_id in filtered_neighbors:
             neighbor_height = self.graph.heights[neighbor_id]
             if neighbor_height < lowest_height:
                 lowest_height = neighbor_height
