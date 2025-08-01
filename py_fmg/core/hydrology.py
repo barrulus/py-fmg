@@ -314,91 +314,66 @@ class Hydrology:
         """
         Simulate water drainage and river formation.
         
-        This implements the core water flow algorithm:
-        1. Add precipitation flux to each land cell
-        2. Calculate lake outlets and evaporation
-        3. Flow water downhill, creating rivers where flux exceeds threshold
+        This implements the core water flow algorithm matching FMG exactly:
+        1. Pre-calculate lake outlets (like Lakes.defineClimateData)
+        2. Process each land cell from highest to lowest:
+           - Add precipitation flux
+           - If cell is a lake outlet, add lake excess water
+           - Flow water downhill, creating rivers where flux exceeds threshold
         """
         logger.info("Simulating water drainage")
 
-        # Step 1: Add precipitation flux to land cells
-        self._add_precipitation_flux()
+        # Step 1: Pre-calculate lake outlets (equivalent to Lakes.defineClimateData)
+        lake_out_cells = self._define_lake_climate_data()
 
-        # Step 2: Handle lake outlets and evaporation
-        self._process_lake_drainage()
+        # Step 2: Process land cells and flow water downhill
+        self._flow_water_downhill(lake_out_cells)
 
-        # Step 3: Flow water downhill and create rivers
-        self._flow_water_downhill()
 
-    def _add_precipitation_flux(self) -> None:
-        """Add precipitation flux to each land cell."""
-        if not hasattr(self.climate, 'precipitation'):
-            logger.warning("No precipitation data available, using default values")
-            # Use default precipitation if climate data not available
-            for i in range(len(self.flux)):
-                if self.graph.heights[i] >= self.options.sea_level:
-                    self.flux[i] = 50.0  # Default precipitation flux
-            return
-
-        # Add precipitation flux scaled by cell area
-        cells_number_modifier = len(self.graph.points) / 10000  # Scale factor
-
-        for i in range(len(self.flux)):
-            if self.graph.heights[i] >= self.options.sea_level:
-                # FIXED: Access precipitation using proper grid mapping
-                # This matches FMG's: cells.fl[i] += prec[cells.g[i]] / cellsNumberModifier
-                if (hasattr(self.graph, 'grid_indices') and 
-                    self.graph.grid_indices is not None and
-                    isinstance(self.climate.precipitation, dict)):
-                    # Use grid mapping to access original climate data
-                    grid_cell_id = self.graph.grid_indices[i]
-                    precip = self.climate.precipitation.get(grid_cell_id, 50.0)
-                else:
-                    # Fallback: Direct access for packed climate data
-                    # This handles cases where climate is calculated on packed grid
-                    if isinstance(self.climate.precipitation, dict):
-                        precip = self.climate.precipitation.get(i, 50.0)
-                    else:
-                        # Handle numpy array case
-                        precip = self.climate.precipitation[i] if i < len(self.climate.precipitation) else 50.0
-                
-                self.flux[i] += precip / cells_number_modifier
-
-    def _process_lake_drainage(self) -> None:
-        """Handle lake outlets and evaporation."""
+    def _define_lake_climate_data(self) -> Dict[int, List]:
+        """
+        Pre-calculate lake outlets and climate data (equivalent to Lakes.defineClimateData).
+        
+        Returns:
+            Dictionary mapping outlet cell IDs to list of lakes that drain through them
+        """
+        lake_out_cells = {}
+        
         if not hasattr(self.features, 'features'):
-            return
-
+            return lake_out_cells
+        
+        # Process each lake feature
         for feature in self.features.features:
-            if feature and feature.type == "lake":
-                self._process_single_lake(feature)
-
-    def _process_single_lake(self, lake_feature) -> None:
-        """Process drainage for a single lake."""
-        # Get lake cells from feature_ids
-        lake_cells = []
-        if hasattr(self.features, 'feature_ids') and self.features.feature_ids is not None:
-            for i, fid in enumerate(self.features.feature_ids):
-                if fid == lake_feature.id:
-                    lake_cells.append(i)
-
-        if not lake_cells:
-            return
-
-        # Calculate total inflow to lake
-        total_inflow = sum(self.flux[cell_id] for cell_id in lake_cells)
-
-        # Calculate evaporation (simplified model)
-        lake_area = lake_feature.area or len(lake_cells)
-        evaporation = lake_area * 2.0  # Simplified evaporation rate
-
-        # If inflow exceeds evaporation, create outlet
-        if total_inflow > evaporation:
-            outlet_cell = self._find_lake_outlet(lake_feature, lake_cells)
+            if not feature or not hasattr(feature, 'type') or feature.type != "lake":
+                continue
+            
+            # Get lake cells
+            lake_cells = []
+            if hasattr(self.features, 'feature_ids') and self.features.feature_ids is not None:
+                for i, fid in enumerate(self.features.feature_ids):
+                    if fid == feature.id:
+                        lake_cells.append(i)
+            
+            if not lake_cells:
+                continue
+            
+            # Calculate lake properties
+            # Note: In FMG, flux is accumulated during the main loop, but we pre-calculate area/evaporation
+            lake_area = len(lake_cells)
+            feature.area = lake_area
+            feature.evaporation = lake_area * 2.0  # Simplified evaporation rate
+            feature.flux = 0  # Will be accumulated during main loop
+            
+            # Find outlet cell
+            outlet_cell = self._find_lake_outlet(feature, lake_cells)
             if outlet_cell is not None:
-                # Set outlet flux to excess water
-                excess_water = total_inflow - evaporation
-                self.flux[outlet_cell] += excess_water
+                feature.outCell = outlet_cell
+                # Map outlet cell to lakes that drain through it
+                if outlet_cell not in lake_out_cells:
+                    lake_out_cells[outlet_cell] = []
+                lake_out_cells[outlet_cell].append(feature)
+        
+        return lake_out_cells
 
     def _find_lake_outlet(self, lake_feature, lake_cells: List[int]) -> Optional[int]:
         """Find the lowest point on lake perimeter for outlet."""
@@ -432,8 +407,14 @@ class Hydrology:
 
         return outlet_cell
 
-    def _flow_water_downhill(self) -> None:
-        """Flow water downhill, creating rivers where flux exceeds threshold."""
+    def _flow_water_downhill(self, lake_out_cells: Dict[int, List]) -> None:
+        """
+        Flow water downhill, creating rivers where flux exceeds threshold.
+        Integrates lake outlet processing during the main loop (matches FMG).
+        """
+        # Calculate cells number modifier for precipitation scaling
+        cells_number_modifier = (len(self.graph.points) / 10000) ** 0.25
+        
         # Process land cells in height order (highest first) - matches FMG exactly
         land_cells = []
         for i in range(len(self.graph.heights)):
@@ -444,7 +425,95 @@ class Hydrology:
         land_cells.sort(key=lambda i: self.graph.heights[i], reverse=True)
 
         for cell_id in land_cells:
-            # Find lowest neighbor to flow to
+            # Step 1: Add precipitation flux to this cell
+            if (hasattr(self.climate, 'precipitation') and 
+                hasattr(self.graph, 'grid_indices') and 
+                self.graph.grid_indices is not None):
+                # Use grid mapping to access original climate data
+                grid_cell_id = self.graph.grid_indices[cell_id]
+                if isinstance(self.climate.precipitation, dict):
+                    precip = self.climate.precipitation.get(grid_cell_id, 50.0)
+                else:
+                    precip = self.climate.precipitation[grid_cell_id] if grid_cell_id < len(self.climate.precipitation) else 50.0
+            else:
+                # Fallback
+                if isinstance(self.climate.precipitation, dict):
+                    precip = self.climate.precipitation.get(cell_id, 50.0)
+                else:
+                    precip = self.climate.precipitation[cell_id] if cell_id < len(self.climate.precipitation) else 50.0
+            
+            self.flux[cell_id] += precip / cells_number_modifier
+            
+            # Step 2: Check if this cell is a lake outlet
+            if cell_id in lake_out_cells:
+                # Process each lake that drains through this outlet
+                lakes = lake_out_cells[cell_id]
+                for lake in lakes:
+                    # Only process if lake flux exceeds evaporation
+                    if lake.flux > lake.evaporation:
+                        # Find the lake cell adjacent to this outlet
+                        lake_cell = None
+                        for neighbor_id in self._get_neighbors(cell_id):
+                            if (neighbor_id < len(self.graph.heights) and
+                                self.graph.heights[neighbor_id] < self.options.sea_level and
+                                hasattr(self.features, 'feature_ids') and
+                                self.features.feature_ids is not None and
+                                neighbor_id < len(self.features.feature_ids) and
+                                self.features.feature_ids[neighbor_id] == lake.id):
+                                lake_cell = neighbor_id
+                                break
+                        
+                        if lake_cell is not None:
+                            # Add excess lake water to the lake cell
+                            excess_water = max(lake.flux - lake.evaporation, 0)
+                            self.flux[lake_cell] += excess_water
+                            
+                            # Handle river creation/assignment for lake (matches FMG logic)
+                            if self.river_ids[lake_cell] != 0:
+                                # Check if we should keep existing river identity
+                                lake_river = self.river_ids[lake_cell]
+                                same_river = any(
+                                    self.river_ids[n] == lake_river 
+                                    for n in self._get_neighbors(lake_cell)
+                                    if n < len(self.river_ids)
+                                )
+                                
+                                if not same_river:
+                                    # Create new river for lake
+                                    self.river_ids[lake_cell] = self.next_river_id
+                                    self.rivers[self.next_river_id] = RiverData(id=self.next_river_id)
+                                    self.rivers[self.next_river_id].cells.append(lake_cell)
+                                    self.next_river_id += 1
+                            else:
+                                # Create new river for lake
+                                self.river_ids[lake_cell] = self.next_river_id
+                                self.rivers[self.next_river_id] = RiverData(id=self.next_river_id)
+                                self.rivers[self.next_river_id].cells.append(lake_cell)
+                                self.next_river_id += 1
+                            
+                            # Set lake outlet river
+                            lake.outlet = self.river_ids[lake_cell]
+                            
+                            # Flow lake water downstream
+                            self._flow_down(cell_id, self.flux[lake_cell], lake.outlet)
+                        
+                # Handle tributary assignment (matches FMG)
+                if lakes:
+                    outlet = lakes[0].outlet if hasattr(lakes[0], 'outlet') else None
+                    for lake in lakes:
+                        if hasattr(lake, 'inlets') and isinstance(lake.inlets, list):
+                            for inlet in lake.inlets:
+                                if inlet in self.rivers and outlet:
+                                    self.rivers[inlet].parent_id = outlet
+            
+            # Step 3: Handle near-border cells
+            if self.graph.cell_border_flags[cell_id] and self.river_ids[cell_id] > 0:
+                # Add border cell (-1) to river
+                if self.river_ids[cell_id] in self.rivers:
+                    self.rivers[self.river_ids[cell_id]].cells.append(-1)
+                continue
+            
+            # Step 4: Find downhill flow target
             target_cell = self._find_flow_target(cell_id)
             if target_cell is None:
                 continue  # No downhill flow possible
@@ -453,7 +522,7 @@ class Hydrology:
             if self.graph.heights[cell_id] <= self.graph.heights[target_cell]:
                 continue
             
-            # Handle flux transfer based on amount
+            # Step 5: Handle flux transfer based on amount
             cell_flux = self.flux[cell_id]
             
             if cell_flux < self.options.min_river_flux:
@@ -572,6 +641,26 @@ class Hydrology:
         # CRITICAL: Accumulate flux downstream if on land
         if self.graph.heights[to_cell] >= self.options.sea_level:
             self.flux[to_cell] += from_flux
+        else:
+            # Pour water to water body (lake or ocean)
+            if hasattr(self.features, 'feature_ids') and self.features.feature_ids is not None:
+                if to_cell < len(self.features.feature_ids):
+                    feature_id = self.features.feature_ids[to_cell]
+                    if feature_id > 0 and hasattr(self.features, 'features'):
+                        # Find the feature
+                        for feature in self.features.features:
+                            if feature and hasattr(feature, 'id') and feature.id == feature_id:
+                                if hasattr(feature, 'type') and feature.type == "lake":
+                                    # Update lake properties when river flows into it
+                                    if not hasattr(feature, 'river') or from_flux > getattr(feature, 'enteringFlux', 0):
+                                        feature.river = river_id
+                                        feature.enteringFlux = from_flux
+                                    feature.flux = getattr(feature, 'flux', 0) + from_flux
+                                    if not hasattr(feature, 'inlets'):
+                                        feature.inlets = []
+                                    if river_id not in feature.inlets:
+                                        feature.inlets.append(river_id)
+                                break
         
         # Add cell to river
         if river_id in self.rivers:

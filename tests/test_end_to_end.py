@@ -13,6 +13,7 @@ from py_fmg.core.climate import Climate, ClimateOptions, MapCoordinates
 from py_fmg.core.hydrology import Hydrology, HydrologyOptions
 from py_fmg.core.biomes import BiomeClassifier
 from py_fmg.core.cell_packing import regraph
+from py_fmg.core.settlements import Settlements, SettlementOptions
 from py_fmg.config.heightmap_templates import TEMPLATES, get_template
 
 # Test configuration constants
@@ -656,6 +657,267 @@ def generate_hydrology_debug(
     plt.close()
 
 
+def generate_settlements_debug(
+    settlements, states, packed_graph, output_path, template_name, seed
+):
+    """Generate debug visualization showing settlements and state territories."""
+    from matplotlib.colors import ListedColormap
+    import matplotlib.patches as mpatches
+    from matplotlib.collections import LineCollection
+
+    # Create figure with 2x2 subplots
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+
+    # Get dimensions
+    width = packed_graph.graph_width
+    height = packed_graph.graph_height
+
+    # Subplot 1: State Territories
+    # Create colormap for states
+    num_states = len(states)
+    state_colors = plt.cm.tab20(np.linspace(0, 1, num_states))
+    state_cmap = ListedColormap(state_colors)
+    
+    # Get cell state assignments
+    cell_states = settlements.cell_state
+    
+    state_scatter = ax1.scatter(
+        *packed_graph.points.T,
+        c=cell_states,
+        cmap=state_cmap,
+        s=20,
+        alpha=0.7,
+        vmin=0,
+        vmax=num_states-1,
+    )
+    ax1.set_xlim(0, width)
+    ax1.set_ylim(0, height)
+    ax1.set_aspect("equal")
+    ax1.set_title("State Territories", fontsize=14)
+    
+    # Add state names legend
+    state_patches = []
+    for state_id, state in states.items():
+        if state_id > 0:  # Skip neutral state
+            color = state_colors[state_id % len(state_colors)]
+            territory_size = np.sum(cell_states == state_id)
+            patch = mpatches.Patch(color=color, label=f"{state.name} ({territory_size} cells)")
+            state_patches.append(patch)
+    
+    ax1.legend(handles=state_patches, bbox_to_anchor=(1.05, 1), loc="upper left", fontsize=8)
+
+    # Subplot 2: Settlements by Type and Size
+    # Plot base terrain
+    terrain_scatter = ax2.scatter(
+        *packed_graph.points.T,
+        c=packed_graph.heights,
+        cmap="terrain",
+        s=5,
+        alpha=0.2,
+        vmin=0,
+        vmax=100,
+    )
+    
+    # Plot settlements
+    settlement_types = {}
+    for settlement in settlements.settlements.values():
+        if settlement.id == 0:
+            continue
+        
+        # Group by type
+        if settlement.type not in settlement_types:
+            settlement_types[settlement.type] = {
+                'x': [], 'y': [], 'size': [], 'is_capital': []
+            }
+        
+        settlement_types[settlement.type]['x'].append(settlement.x)
+        settlement_types[settlement.type]['y'].append(settlement.y)
+        settlement_types[settlement.type]['size'].append(settlement.population * 10)  # Scale for visibility
+        settlement_types[settlement.type]['is_capital'].append(settlement.is_capital)
+    
+    # Plot each settlement type with different colors
+    type_colors = {
+        'Naval': 'navy',
+        'Highland': 'brown',
+        'River': 'cyan',
+        'Lake': 'blue',
+        'Nomadic': 'orange',
+        'Hunting': 'green',
+        'Generic': 'gray'
+    }
+    
+    for stype, data in settlement_types.items():
+        color = type_colors.get(stype, 'black')
+        ax2.scatter(
+            data['x'], data['y'],
+            s=data['size'],
+            c=color,
+            alpha=0.7,
+            edgecolors='black',
+            linewidths=0.5,
+            label=f"{stype} ({len(data['x'])})"
+        )
+        
+        # Mark capitals with stars
+        capital_indices = [i for i, is_cap in enumerate(data['is_capital']) if is_cap]
+        if capital_indices:
+            ax2.scatter(
+                [data['x'][i] for i in capital_indices],
+                [data['y'][i] for i in capital_indices],
+                marker='*',
+                s=300,
+                c='gold',
+                edgecolors='black',
+                linewidths=1,
+                zorder=10
+            )
+    
+    ax2.set_xlim(0, width)
+    ax2.set_ylim(0, height)
+    ax2.set_aspect("equal")
+    ax2.set_title("Settlements by Type", fontsize=14)
+    ax2.legend(bbox_to_anchor=(1.05, 1), loc="upper left", fontsize=9)
+
+    # Subplot 3: Population Distribution (based on actual settlements)
+    # First, plot base terrain in gray
+    ax3.scatter(
+        *packed_graph.points.T,
+        c='lightgray',
+        s=5,
+        alpha=0.3,
+    )
+    
+    # Create population influence map based on settlements
+    # Each settlement influences nearby cells based on distance
+    cell_influence = np.zeros(len(packed_graph.points))
+    
+    for settlement in settlements.settlements.values():
+        if settlement.id == 0 or settlement.population <= 0:
+            continue
+            
+        # Find distance from this settlement to all cells
+        distances = np.sqrt(
+            (packed_graph.points[:, 0] - settlement.x) ** 2 +
+            (packed_graph.points[:, 1] - settlement.y) ** 2
+        )
+        
+        # Influence radius based on population (larger cities influence more area)
+        # Population is in thousands, so scale appropriately
+        radius = np.sqrt(settlement.population) * 10  # Adjust multiplier as needed
+        
+        # Calculate influence (inverse distance weighted)
+        influence = np.where(
+            distances < radius,
+            settlement.population * np.exp(-distances / (radius / 3)),
+            0
+        )
+        
+        # Add to cumulative influence
+        cell_influence += influence
+    
+    # Plot the influence map
+    pop_scatter = ax3.scatter(
+        *packed_graph.points.T,
+        c=cell_influence,
+        cmap="YlOrRd",
+        s=15,
+        alpha=0.7,
+        vmin=0,
+        vmax=np.percentile(cell_influence[cell_influence > 0], 95) if np.any(cell_influence > 0) else 1,
+    )
+    
+    # Overlay actual settlements
+    for settlement in settlements.settlements.values():
+        if settlement.id == 0:
+            continue
+        
+        # Size based on population
+        size = np.sqrt(settlement.population) * 50
+        
+        ax3.scatter(
+            settlement.x,
+            settlement.y,
+            s=size,
+            c='darkred' if settlement.is_capital else 'black',
+            marker='*' if settlement.is_capital else 'o',
+            edgecolors='white',
+            linewidths=1,
+            zorder=10,
+            alpha=0.9
+        )
+    
+    ax3.set_xlim(0, width)
+    ax3.set_ylim(0, height)
+    ax3.set_aspect("equal")
+    ax3.set_title("Population Density (thousands)", fontsize=14)
+    plt.colorbar(pop_scatter, ax=ax3, label="Population Influence (thousands)")
+
+    # Subplot 4: Settlement Statistics
+    # Count settlements by state
+    settlements_by_state = {}
+    for settlement in settlements.settlements.values():
+        if settlement.id == 0:
+            continue
+        state_id = settlement.state_id
+        if state_id not in settlements_by_state:
+            settlements_by_state[state_id] = {'count': 0, 'population': 0, 'capitals': 0}
+        settlements_by_state[state_id]['count'] += 1
+        settlements_by_state[state_id]['population'] += settlement.population
+        if settlement.is_capital:
+            settlements_by_state[state_id]['capitals'] += 1
+    
+    # Plot bar chart
+    state_ids = sorted(settlements_by_state.keys())
+    state_names = [states[sid].name if sid in states else f"State {sid}" for sid in state_ids]
+    settlement_counts = [settlements_by_state[sid]['count'] for sid in state_ids]
+    
+    bars = ax4.bar(range(len(state_ids)), settlement_counts, alpha=0.7)
+    ax4.set_xlabel("State")
+    ax4.set_ylabel("Number of Settlements")
+    ax4.set_title("Settlements per State", fontsize=14)
+    ax4.set_xticks(range(len(state_names)))
+    ax4.set_xticklabels(state_names, rotation=45, ha="right", fontsize=9)
+    
+    # Add total population labels
+    for i, (bar, sid) in enumerate(zip(bars, state_ids)):
+        pop = settlements_by_state[sid]['population']
+        ax4.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.1,
+            f"Pop: {pop:.0f}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            rotation=0
+        )
+    
+    # Add summary statistics
+    total_settlements = sum(settlement_counts)
+    total_population = sum(s['population'] for s in settlements_by_state.values())
+    avg_pop_per_settlement = total_population / total_settlements if total_settlements > 0 else 0
+    
+    ax4.text(
+        0.02,
+        0.98,
+        f"Total settlements: {total_settlements}\n"
+        f"Total population: {total_population:.0f}\n"
+        f"Avg per settlement: {avg_pop_per_settlement:.1f}\n"
+        f"States: {len(states) - 1}",  # Exclude neutral state
+        transform=ax4.transAxes,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+        fontsize=9,
+    )
+
+    # Add overall title
+    title = f"{template_name.title()} - Settlement and State Analysis (Seed: {seed})"
+    fig.suptitle(title, fontsize=16)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+
 def generate_biome_debug(
     biome_classifier, biomes, climate, packed_graph, output_path, template_name, seed
 ):
@@ -1027,12 +1289,92 @@ def test_full_pipeline_with_visualization(
         percentage = (count / len(biomes)) * 100
         print(f"  - {biome_name}: {count} cells ({percentage:.1f}%)")
 
-    # Stage 10: Generate comprehensive final visualization
+    # Stage 10: Generate settlements and states
+    print("Generating settlements and states...")
+    
+    # Create mock cultures for settlement generation
+    # In a full implementation, this would come from a proper Cultures module
+    class MockCultures:
+        def __init__(self, n_cells):
+            # Assign simple culture IDs based on regions
+            self.cell_cultures = np.ones(n_cells, dtype=np.int32)
+            # Create 3-5 cultural regions
+            n_cultures = np.random.randint(3, 6)
+            for i in range(1, n_cultures):
+                # Assign cultures in rough regions
+                start_idx = (i - 1) * n_cells // n_cultures
+                end_idx = i * n_cells // n_cultures
+                self.cell_cultures[start_idx:end_idx] = i
+            self.cultures = {i: type('Culture', (), {'center': i * 100}) for i in range(1, n_cultures + 1)}
+    
+    mock_cultures = MockCultures(len(packed_graph.points))
+    
+    # Add required attributes to packed_graph for settlements
+    if not hasattr(packed_graph, 'width'):
+        packed_graph.width = TEST_WIDTH
+    if not hasattr(packed_graph, 'height'):
+        packed_graph.height = TEST_HEIGHT
+    
+    # Add mock haven/harbor data for port detection
+    packed_graph.cell_haven = np.zeros(len(packed_graph.points), dtype=np.int32)
+    packed_graph.harbor_scores = np.zeros(len(packed_graph.points))
+    packed_graph.temperature = climate.temperatures  # Use climate temperatures
+    packed_graph.river_ids = hydrology.river_ids if hasattr(hydrology, 'river_ids') else np.zeros(len(packed_graph.points), dtype=np.int32)
+    packed_graph.flux = hydrology.flux
+    packed_graph.cell_areas = np.ones(len(packed_graph.points))
+    
+    # Configure settlement options
+    settlement_options = SettlementOptions(
+        states_number=5,  # Reasonable number for test
+        manors_number=50,  # Reasonable number of towns
+        growth_rate=1.0,
+        states_growth_rate=1.0
+    )
+    
+    settlements_system = Settlements(
+        packed_graph,
+        packed_features,
+        mock_cultures,
+        biome_classifier,
+        settlement_options
+    )
+    
+    # Need to add biome data to classifier
+    biome_classifier.cell_biomes = biomes
+    
+    # Generate settlements and states
+    settlement_data, state_data = settlements_system.generate()
+    
+    # Generate settlements debug image if requested
+    if generate_debug_images:
+        settlements_path = output_dir / f"{template}_8_settlements_{timestamp}.png"
+        print("Generating settlements debug visualization...")
+        generate_settlements_debug(
+            settlements_system, state_data, packed_graph, settlements_path, template, seed
+        )
+        print(f"Settlements visualization saved to {settlements_path}")
+    
+    # Verify settlement generation
+    assert isinstance(settlement_data, dict)
+    assert isinstance(state_data, dict)
+    assert len(state_data) >= 1  # At least neutral state
+    assert len(settlement_data) > 0  # Should have some settlements
+    
+    # Count capitals and towns
+    capitals = [s for s in settlement_data.values() if s.is_capital]
+    towns = [s for s in settlement_data.values() if not s.is_capital]
+    
+    print(f"Generated {len(state_data) - 1} states (plus neutral)")
+    print(f"Generated {len(settlement_data)} settlements: {len(capitals)} capitals, {len(towns)} towns")
+    print(f"Average state territory: {np.sum(settlements_system.cell_state > 0) / (len(state_data) - 1):.0f} cells")
+
+    # Stage 11: Generate comprehensive final visualization
     print("Generating visualization...")
 
     # Import needed for interpolation
     from scipy.interpolate import griddata
     from matplotlib.colors import LinearSegmentedColormap
+    from matplotlib.lines import Line2D
 
     # Create a single plot like generate_sample_maps.py
     fig, ax = plt.subplots(figsize=(12, 10))
@@ -1089,6 +1431,101 @@ def test_full_pipeline_with_visualization(
     sea_contour = ax.contour(
         xi, yi, zi, levels=[20], colors="navy", linewidths=1.5, alpha=0.8
     )
+    
+    # Add rivers
+    if rivers:
+        # Group river cells by river ID for continuous lines
+        river_lines = {}
+        for river_id, river_data in rivers.items():
+            if river_data.cells and river_data.discharge > 0:
+                # Get coordinates for river cells
+                river_coords = []
+                for cell_id in river_data.cells:
+                    if 0 <= cell_id < len(packed_graph.points):
+                        river_coords.append(packed_graph.points[cell_id])
+                
+                if len(river_coords) > 1:
+                    river_lines[river_id] = {
+                        'coords': np.array(river_coords),
+                        'width': max(1, river_data.width / 10),  # Scale width for visibility
+                        'discharge': river_data.discharge
+                    }
+        
+        # Draw rivers from smallest to largest discharge
+        sorted_rivers = sorted(river_lines.items(), key=lambda x: x[1]['discharge'])
+        
+        for river_id, river_info in sorted_rivers:
+            coords = river_info['coords']
+            width = river_info['width']
+            
+            # Draw river as connected line
+            ax.plot(
+                coords[:, 0], coords[:, 1],
+                color='#4682B4',  # Steel blue
+                linewidth=width,
+                alpha=0.7,
+                zorder=5
+            )
+    
+    # Add settlements
+    if settlement_data:
+        # Separate settlements by type
+        capitals = []
+        towns = []
+        
+        for settlement in settlement_data.values():
+            if settlement.id == 0:
+                continue
+            
+            if settlement.is_capital:
+                capitals.append(settlement)
+            else:
+                towns.append(settlement)
+        
+        # Plot towns first (smaller, underneath)
+        if towns:
+            town_x = [s.x for s in towns]
+            town_y = [s.y for s in towns]
+            town_sizes = [max(20, s.population * 2) for s in towns]  # Scale by population
+            
+            ax.scatter(
+                town_x, town_y,
+                s=town_sizes,
+                c='white',
+                edgecolors='black',
+                linewidths=0.5,
+                alpha=0.8,
+                zorder=10
+            )
+        
+        # Plot capitals on top (larger, with special marker)
+        if capitals:
+            capital_x = [s.x for s in capitals]
+            capital_y = [s.y for s in capitals]
+            capital_sizes = [max(100, s.population * 3) for s in capitals]  # Larger scale
+            
+            # Capital outer circle
+            ax.scatter(
+                capital_x, capital_y,
+                s=capital_sizes,
+                c='gold',
+                edgecolors='darkred',
+                linewidths=2,
+                alpha=0.9,
+                zorder=11
+            )
+            
+            # Capital star marker
+            ax.scatter(
+                capital_x, capital_y,
+                s=150,
+                c='darkred',
+                marker='*',
+                edgecolors='gold',
+                linewidths=1,
+                alpha=1.0,
+                zorder=12
+            )
 
     # Remove axes for cleaner look
     ax.set_xticks([])
@@ -1103,12 +1540,50 @@ def test_full_pipeline_with_visualization(
 
     title = f"{template.title()} - {width}x{height} - {total_cells:,} cells\n"
     title += f"Land: {final_land:,} ({land_pct:.1f}%) | Water: {final_water:,} ({water_pct:.1f}%)"
+    if settlement_data and state_data:
+        n_states = len(state_data) - 1  # Exclude neutral
+        n_settlements = len(settlement_data)
+        title += f" | {n_states} States, {n_settlements} Settlements"
     ax.set_title(title, fontsize=14, pad=20)
 
     # Add colorbar
     cbar = plt.colorbar(im, ax=ax, label="Height", shrink=0.8, pad=0.02)
     cbar.ax.axhline(y=20, color="blue", linewidth=2)
     cbar.ax.text(1.5, 20, "Sea Level", rotation=0, va="center", fontsize=10)
+    
+    # Add legend for map features
+    legend_elements = []
+    
+    # River legend
+    if rivers:
+        legend_elements.append(
+            Line2D([0], [0], color='#4682B4', linewidth=2, alpha=0.7, label='Rivers')
+        )
+    
+    # Settlement legend
+    if settlement_data:
+        if towns:
+            legend_elements.append(
+                Line2D([0], [0], marker='o', color='w', markerfacecolor='white', 
+                       markeredgecolor='black', markersize=8, alpha=0.8, linestyle='',
+                       label='Towns')
+            )
+        if capitals:
+            legend_elements.append(
+                Line2D([0], [0], marker='*', color='w', markerfacecolor='darkred',
+                       markeredgecolor='gold', markersize=12, linestyle='',
+                       label='Capitals')
+            )
+    
+    # Add legend if there are elements
+    if legend_elements:
+        ax.legend(
+            handles=legend_elements,
+            loc='lower right',
+            bbox_to_anchor=(0.98, 0.02),
+            framealpha=0.8,
+            fontsize=10
+        )
 
     # Add pipeline info
     pipeline_text = "Complete FMG Pipeline:\n"
@@ -1118,7 +1593,8 @@ def test_full_pipeline_with_visualization(
     pipeline_text += "✓ reGraph (coastal enhancement)\n"
     pipeline_text += "✓ Climate system\n"
     pipeline_text += "✓ Hydrology + rivers\n"
-    pipeline_text += "✓ Biome classification"
+    pipeline_text += "✓ Biome classification\n"
+    pipeline_text += "✓ Settlements + states"
 
     ax.text(
         0.02,
@@ -1144,7 +1620,7 @@ def test_full_pipeline_with_visualization(
     )
 
     # Save comprehensive final visualization
-    output_filename = f"{template}_8_comprehensive_{timestamp}.png"
+    output_filename = f"{template}_9_comprehensive_{timestamp}.png"
     output_path = output_dir / output_filename
     plt.savefig(output_path, dpi=150, bbox_inches="tight", pad_inches=0.1)
     plt.close()
@@ -1165,6 +1641,9 @@ def test_full_pipeline_with_visualization(
         "rivers": rivers,
         "biome_classifier": biome_classifier,
         "biomes": biomes,
+        "settlements_system": settlements_system,
+        "settlements": settlement_data,
+        "states": state_data,
         "visualization_path": output_path,
     }
 
@@ -1176,6 +1655,7 @@ def test_full_pipeline_with_visualization(
         results["climate_path"] = climate_path
         results["hydrology_path"] = hydrology_path
         results["biome_path"] = biome_path
+        results["settlements_path"] = settlements_path
 
     return results
 
@@ -1316,6 +1796,37 @@ def test_complete_pipeline_with_climate_and_hydrology(template="atoll", seed=Non
     assert np.all(biomes >= 0)
     assert np.all(biomes <= 12)
 
+    # Stage 9: Generate settlements and states (simplified)
+    class MockCultures:
+        def __init__(self, n_cells):
+            self.cell_cultures = np.ones(n_cells, dtype=np.int32)
+            self.cultures = {1: type('Culture', (), {'center': 50})}
+    
+    mock_cultures = MockCultures(len(packed_graph.points))
+    
+    # Add required attributes
+    if not hasattr(packed_graph, 'width'):
+        packed_graph.width = TEST_WIDTH
+    if not hasattr(packed_graph, 'height'):
+        packed_graph.height = TEST_HEIGHT
+    
+    packed_graph.cell_haven = np.zeros(len(packed_graph.points), dtype=np.int32)
+    packed_graph.temperature = climate.temperatures
+    packed_graph.river_ids = hydrology.river_ids if hasattr(hydrology, 'river_ids') else np.zeros(len(packed_graph.points), dtype=np.int32)
+    packed_graph.flux = hydrology.flux
+    
+    biome_classifier.cell_biomes = biomes
+    
+    settlements_system = Settlements(
+        packed_graph,
+        packed_features,
+        mock_cultures,
+        biome_classifier,
+        SettlementOptions(states_number=3, manors_number=20)
+    )
+    
+    settlement_data, state_data = settlements_system.generate()
+
     print(f"✓ Voronoi: {len(voronoi_graph.points)} cells generated")
     print(f"✓ Heightmap: {heights.min()}-{heights.max()} height range")
     print(f"✓ Features: {len(features.features)} features detected")
@@ -1327,6 +1838,7 @@ def test_complete_pipeline_with_climate_and_hydrology(template="atoll", seed=Non
         f"✓ Hydrology: {len(rivers)} rivers generated with realistic discharge values"
     )
     print(f"✓ Biomes: {len(np.unique(biomes))} different biome types classified")
+    print(f"✓ Settlements: {len(settlement_data)} settlements in {len(state_data) - 1} states")
 
     return {
         "voronoi_graph": voronoi_graph,
@@ -1337,6 +1849,9 @@ def test_complete_pipeline_with_climate_and_hydrology(template="atoll", seed=Non
         "rivers": rivers,
         "biome_classifier": biome_classifier,
         "biomes": biomes,
+        "settlements_system": settlements_system,
+        "settlements": settlement_data,
+        "states": state_data,
     }
 
 
