@@ -137,6 +137,7 @@ class TestHeightAlteration:
         
         self.features = Mock()
         self.features.features = []  # Empty list for mock
+        self.features.feature_ids = None  # No feature IDs assigned
         self.climate = Mock()
         self.climate.precipitation = {}
         
@@ -209,25 +210,11 @@ class TestDepressionResolution:
         
         self.features = Mock()
         self.features.features = []  # Empty list for mock
+        self.features.feature_ids = None  # No feature IDs assigned
         self.climate = Mock()
         
         self.hydrology = Hydrology(self.graph, self.features, self.climate)
     
-    def test_is_depressed_detection(self):
-        """Test depression detection logic."""
-        # Create simple test case
-        test_graph = Mock()
-        test_graph.heights = np.array([25, 30, 30, 30])  # Cell 0 is depressed
-        test_graph.cell_neighbors = [[1, 2, 3], [0, 2], [0, 1, 3], [0, 2]]  # Cell connectivity
-        test_graph.points = np.array([[0, 0], [1, 0], [0, 1], [1, 1]])  # Mock points for array size
-        
-        hydrology = Hydrology(test_graph, Mock(), Mock())
-        
-        # Cell 0 should be depressed (lower than neighbors 1,2,3)
-        assert hydrology._is_depressed(0)
-        
-        # Cell 1 should not be depressed (same height as some neighbors)
-        assert not hydrology._is_depressed(1)
     
     def test_get_neighbors(self):
         """Test neighbor finding from cell connectivity."""
@@ -261,9 +248,20 @@ class TestDepressionResolution:
     
     def test_resolve_depressions_eliminates_pits(self):
         """Test that depression resolution eliminates local minima."""
-        # Create a clear depression
+        # Find an interior cell (not on border)
+        interior_cell = None
+        for i in range(len(self.graph.cell_border_flags)):
+            if not self.graph.cell_border_flags[i]:
+                interior_cell = i
+                break
+        
+        if interior_cell is None:
+            # Skip test if no interior cells (unlikely)
+            return
+        
+        # Create a clear depression at interior cell
         for i in range(len(self.graph.heights)):
-            if i == 0:
+            if i == interior_cell:
                 self.graph.heights[i] = 20  # Depression
             else:
                 self.graph.heights[i] = 30  # Higher surroundings
@@ -272,7 +270,7 @@ class TestDepressionResolution:
         self.hydrology.resolve_depressions()
         
         # Depression should be filled
-        assert self.graph.heights[0] > 20  # Should be raised
+        assert self.graph.heights[interior_cell] > 20  # Should be raised
     
     def test_resolve_depressions_max_iterations(self):
         """Test that resolution respects maximum iterations."""
@@ -400,6 +398,7 @@ class TestRiverFormation:
         
         self.features = Mock()
         self.features.features = []  # Empty list for mock
+        self.features.feature_ids = None  # No feature IDs assigned
         self.climate = Mock()
         
         self.hydrology = Hydrology(self.graph, self.features, self.climate)

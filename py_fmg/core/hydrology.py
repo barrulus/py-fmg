@@ -118,79 +118,169 @@ class Hydrology:
         # Store original heights
         self.original_heights = self.graph.heights.copy()
 
-        # Add small random variations to break ties in flat areas
-        # This prevents water from getting stuck in perfectly flat regions
+        # Check if distance field is available
+        if not hasattr(self.graph, 'distance_field') or self.graph.distance_field is None:
+            logger.warning("No distance field available, using fallback variation")
+            # Fallback to small deterministic variation if distance field not available
+            for i in range(len(self.graph.heights)):
+                if self.graph.heights[i] >= self.options.sea_level:
+                    variation = (hash(i) % 21 - 10) * 0.00001
+                    self.graph.heights[i] += variation
+            return
+
+        # Add distance-based variations to break ties in flat areas (matches FMG exactly)
+        # h + t[i] / 100 + d3.mean(c[i].map(c => t[c])) / 10000
         for i in range(len(self.graph.heights)):
             if self.graph.heights[i] >= self.options.sea_level:
-                # Add tiny random variation (±0.01) to break ties
-                # Use a smaller range that won't cause test failures
-                variation = (hash(i) % 21 - 10) * 0.00001  # Very small deterministic variation
-                self.graph.heights[i] += variation
+                # Primary variation based on distance to water
+                distance_variation = self.graph.distance_field[i] / 100.0
+                
+                # Secondary variation based on mean of neighbor distances
+                neighbors = self._get_neighbors(i)
+                if neighbors:
+                    neighbor_distances = [self.graph.distance_field[n] for n in neighbors 
+                                        if n < len(self.graph.distance_field)]
+                    mean_neighbor_distance = np.mean(neighbor_distances) if neighbor_distances else 0
+                else:
+                    mean_neighbor_distance = 0
+                
+                neighbor_variation = mean_neighbor_distance / 10000.0
+                
+                # Apply both variations
+                self.graph.heights[i] += distance_variation + neighbor_variation
 
     def resolve_depressions(self) -> None:
         """
         Fill depressions iteratively to ensure proper water flow.
         
-        This is the most critical and performance-sensitive algorithm.
-        It eliminates local minima that would trap water by iteratively
-        raising the elevation of depressed areas.
+        This matches FMG's resolveDepressions function exactly.
+        Processes cells from lowest to highest, raising cells that are lower
+        than their lowest neighbor. Special handling for lakes.
         """
         logger.info("Resolving depressions")
 
         max_iterations = self.options.max_depression_iterations
-        iteration = 0
-        changed = True
+        check_lake_max_iteration = int(max_iterations * 0.85)
+        elevate_lake_max_iteration = int(max_iterations * 0.75)
+        
+        # Helper function to get height of lake or cell (matches FMG's height function)
+        def height(i: int) -> float:
+            if (hasattr(self.features, 'feature_ids') and 
+                self.features.feature_ids is not None and
+                i < len(self.features.feature_ids)):
+                feature_id = self.features.feature_ids[i]
+                if feature_id > 0 and hasattr(self.features, 'features'):
+                    for feature in self.features.features:
+                        if feature and hasattr(feature, 'id') and feature.id == feature_id:
+                            if hasattr(feature, 'height') and feature.height is not None:
+                                return feature.height
+            return self.graph.heights[i]
+        
+        # Get lakes and land cells
+        lakes = []
+        if hasattr(self.features, 'features'):
+            lakes = [f for f in self.features.features if f and hasattr(f, 'type') and f.type == "lake"]
+        
+        # Get land cells excluding near-border cells
+        land = []
+        for i in range(len(self.graph.heights)):
+            if self.graph.heights[i] >= self.options.sea_level and not self.graph.cell_border_flags[i]:
+                land.append(i)
+        
+        # Sort land cells by height (lowest first)
+        land.sort(key=lambda i: self.graph.heights[i])
+        
+        # Track progress for bad convergence detection
+        progress = []
+        depressions = float('inf')
+        prev_depressions = None
+        
+        for iteration in range(max_iterations):
+            # Check for bad progress (matches FMG logic)
+            if len(progress) > 5 and sum(progress) > 0:
+                # Bad progress, abort and set heights back
+                self.alter_heights()  # Re-apply height alterations
+                depressions = progress[0] if progress else 0
+                logger.warning("Bad progress detected, reverting heights")
+                break
+            
+            depressions = 0
+            
+            # Process lakes (only in early iterations)
+            if iteration < check_lake_max_iteration:
+                for lake in lakes:
+                    if hasattr(lake, 'closed') and lake.closed:
+                        continue
+                    
+                    # Get lake shoreline cells
+                    shoreline = []
+                    if hasattr(lake, 'shoreline'):
+                        shoreline = lake.shoreline
+                    elif hasattr(self.features, 'feature_ids') and self.features.feature_ids is not None:
+                        # Find shoreline cells - cells adjacent to this lake
+                        for i in range(len(self.features.feature_ids)):
+                            if self.features.feature_ids[i] == lake.id:
+                                for neighbor in self._get_neighbors(i):
+                                    if (neighbor < len(self.features.feature_ids) and 
+                                        self.features.feature_ids[neighbor] != lake.id and
+                                        self.graph.heights[neighbor] >= self.options.sea_level):
+                                        if neighbor not in shoreline:
+                                            shoreline.append(neighbor)
+                        lake.shoreline = shoreline
+                    
+                    if not shoreline:
+                        continue
+                    
+                    # Find minimum shoreline height
+                    min_height = min(self.graph.heights[s] for s in shoreline)
+                    
+                    # Check if lake needs elevation
+                    lake_height = lake.height if hasattr(lake, 'height') and lake.height is not None else 0
+                    if min_height >= 100 or lake_height > min_height:
+                        continue
+                    
+                    # Handle lake elevation or closure
+                    if iteration > elevate_lake_max_iteration:
+                        # Restore original heights and close lake
+                        for i in shoreline:
+                            if self.original_heights is not None:
+                                self.graph.heights[i] = self.original_heights[i]
+                        lake.height = min(self.graph.heights[s] for s in shoreline) - 1
+                        lake.closed = True
+                        continue
+                    
+                    depressions += 1
+                    lake.height = min_height + 0.2
+            
+            # Process land cells
+            for i in land:
+                # Get minimum neighbor height (using height function for lakes)
+                neighbor_heights = [height(c) for c in self._get_neighbors(i)]
+                if not neighbor_heights:
+                    continue
+                    
+                min_height = min(neighbor_heights)
+                
+                # Check if cell is depressed (lower than lowest neighbor)
+                if min_height >= 100 or self.graph.heights[i] > min_height:
+                    continue
+                
+                depressions += 1
+                self.graph.heights[i] = min_height + 0.1
+            
+            # Track progress
+            if prev_depressions is not None:
+                progress.append(depressions - prev_depressions)
+            prev_depressions = depressions
+            
+            # Check if converged
+            if depressions == 0:
+                logger.info(f"Depression resolution converged after {iteration + 1} iterations")
+                break
+        
+        if depressions > 0:
+            logger.warning(f"Unresolved depressions: {depressions}. Edit heightmap to fix")
 
-        while changed and iteration < max_iterations:
-            changed = False
-            iteration += 1
-
-            # Get land cells sorted by elevation (lowest first)
-            land_cells = []
-            for i in range(len(self.graph.heights)):
-                if self.graph.heights[i] >= self.options.sea_level:
-                    land_cells.append((self.graph.heights[i], i))
-
-            land_cells.sort()  # Sort by height (ascending)
-
-            # Check each cell for depression
-            for height, cell_id in land_cells:
-                if self._is_depressed(cell_id):
-                    # Find minimum neighbor height
-                    min_neighbor_height = self._get_min_neighbor_height(cell_id)
-
-                    # Determine elevation increment based on lake status
-                    if self._is_lake_cell(cell_id):
-                        increment = self.options.lake_elevation_increment
-                    else:
-                        increment = self.options.depression_elevation_increment
-
-                    # Raise cell to be slightly higher than lowest neighbor
-                    new_height = min_neighbor_height + increment
-                    if new_height > self.graph.heights[cell_id]:
-                        self.graph.heights[cell_id] = new_height
-                        changed = True
-
-            if iteration % 10 == 0:
-                logger.debug(f"Depression resolution iteration {iteration}")
-
-        if iteration >= max_iterations:
-            logger.warning(f"Depression resolution did not converge after {max_iterations} iterations")
-        else:
-            logger.info(f"Depression resolution converged after {iteration} iterations")
-
-    def _is_depressed(self, cell_id: int) -> bool:
-        """Check if a cell is lower than all its neighbors."""
-        cell_height = self.graph.heights[cell_id]
-
-        # Get neighbors from Delaunay triangulation
-        neighbors = self._get_neighbors(cell_id)
-
-        for neighbor_id in neighbors:
-            if self.graph.heights[neighbor_id] <= cell_height:
-                return False  # Found a neighbor that's not higher
-
-        return len(neighbors) > 0  # Is depressed if has neighbors and all are higher
 
     def _get_min_neighbor_height(self, cell_id: int) -> float:
         """Get the minimum height among neighbors."""
@@ -490,6 +580,18 @@ class Hydrology:
     def define_rivers(self) -> None:
         """Define final river properties including width, length, and discharge."""
         logger.info("Defining river properties")
+        
+        # Filter out tiny rivers (less than 3 cells) to match FMG
+        rivers_to_remove = []
+        for river_id, river in self.rivers.items():
+            if len(river.cells) < 3:
+                rivers_to_remove.append(river_id)
+        
+        # Remove tiny rivers
+        for river_id in rivers_to_remove:
+            del self.rivers[river_id]
+        
+        logger.info(f"Filtered out {len(rivers_to_remove)} tiny rivers")
 
         for river_id, river in self.rivers.items():
             if not river.cells:
