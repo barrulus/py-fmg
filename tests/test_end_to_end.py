@@ -11,6 +11,7 @@ from py_fmg.core.heightmap_generator import HeightmapGenerator, HeightmapConfig
 from py_fmg.core.features import Features
 from py_fmg.core.climate import Climate, ClimateOptions, MapCoordinates
 from py_fmg.core.hydrology import Hydrology, HydrologyOptions
+from py_fmg.core.biomes import BiomeClassifier
 from py_fmg.core.cell_packing import regraph
 from py_fmg.config.heightmap_templates import TEMPLATES, get_template
 
@@ -285,14 +286,14 @@ def generate_heightmap_steps_debug(heightmap_gen, template_name, output_path, se
 def generate_voronoi_debug(voronoi_graph, output_path, template_name, seed):
     """Generate debug visualization showing initial Voronoi diagram."""
     from scipy.spatial import Voronoi, voronoi_plot_2d
-    
+
     # Create figure
     fig, ax = plt.subplots(figsize=(12, 10))
-    
+
     # Get dimensions
     width = voronoi_graph.graph_width
     height = voronoi_graph.graph_height
-    
+
     # Plot Voronoi diagram
     vor = Voronoi(voronoi_graph.points)
     voronoi_plot_2d(
@@ -303,9 +304,9 @@ def generate_voronoi_debug(voronoi_graph, output_path, template_name, seed):
         line_width=0.5,
         point_size=2,
     )
-    
+
     # Plot points colored by height if available
-    if hasattr(voronoi_graph, 'heights') and voronoi_graph.heights is not None:
+    if hasattr(voronoi_graph, "heights") and voronoi_graph.heights is not None:
         scatter = ax.scatter(
             *voronoi_graph.points.T,
             c=voronoi_graph.heights,
@@ -323,22 +324,23 @@ def generate_voronoi_debug(voronoi_graph, output_path, template_name, seed):
             s=15,
             alpha=0.7,
         )
-    
+
     ax.set_xlim(0, width)
     ax.set_ylim(0, height)
     ax.set_aspect("equal")
     ax.set_title(f"{template_name.title()} - Initial Voronoi Diagram", fontsize=14)
-    
+
     # Add statistics
     ax.text(
-        0.02, 0.98,
+        0.02,
+        0.98,
         f"Points: {len(voronoi_graph.points):,}\nAfter Lloyd's relaxation",
         transform=ax.transAxes,
         verticalalignment="top",
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
         fontsize=10,
     )
-    
+
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
@@ -348,24 +350,26 @@ def generate_heightmap_debug(packed_graph, output_path, template_name, seed):
     """Generate debug visualization showing interpolated heightmap like a traditional topographic map."""
     from scipy.interpolate import griddata
     from matplotlib.colors import LinearSegmentedColormap
-    
+
     # Create figure
     fig, ax = plt.subplots(figsize=(12, 10))
-    
+
     # Get dimensions
     width = packed_graph.graph_width
     height = packed_graph.graph_height
-    
+
     # Create interpolated grid for smooth heightmap
     grid_resolution = 600
     xi = np.linspace(0, width, grid_resolution)
     yi = np.linspace(0, height, grid_resolution)
     xi, yi = np.meshgrid(xi, yi)
-    
+
     # Interpolate heights from packed points
     points_array = np.array(packed_graph.points)
-    zi = griddata(points_array, packed_graph.heights, (xi, yi), method="linear", fill_value=0)
-    
+    zi = griddata(
+        points_array, packed_graph.heights, (xi, yi), method="linear", fill_value=0
+    )
+
     # Create custom terrain colormap
     colors = [
         (0.0, "#001a33"),  # Deep ocean
@@ -379,7 +383,7 @@ def generate_heightmap_debug(packed_graph, output_path, template_name, seed):
         (1.0, "#ffffff"),  # Snow peaks
     ]
     cmap = LinearSegmentedColormap.from_list("terrain_custom", colors, N=100)
-    
+
     # Plot interpolated heightmap
     im = ax.imshow(
         zi,
@@ -391,34 +395,32 @@ def generate_heightmap_debug(packed_graph, output_path, template_name, seed):
         aspect="equal",
         interpolation="bilinear",
     )
-    
+
     # Add contour lines for topographic effect
     contours = ax.contour(
-        xi, yi, zi,
+        xi,
+        yi,
+        zi,
         levels=np.arange(0, 101, 10),
         colors="black",
         linewidths=0.5,
         alpha=0.3,
     )
-    
+
     # Highlight sea level
     sea_contour = ax.contour(
-        xi, yi, zi, 
-        levels=[20], 
-        colors="navy", 
-        linewidths=2, 
-        alpha=0.8
+        xi, yi, zi, levels=[20], colors="navy", linewidths=2, alpha=0.8
     )
-    
+
     ax.set_xlim(0, width)
     ax.set_ylim(0, height)
     ax.set_title(f"{template_name.title()} - Interpolated Heightmap", fontsize=14)
-    
+
     # Add colorbar
     cbar = plt.colorbar(im, ax=ax, label="Height", shrink=0.8)
     cbar.ax.axhline(y=20, color="blue", linewidth=2)
     cbar.ax.text(1.5, 20, "Sea Level", rotation=0, va="center", fontsize=9)
-    
+
     # Add height statistics
     min_height = np.min(packed_graph.heights)
     max_height = np.max(packed_graph.heights)
@@ -426,9 +428,10 @@ def generate_heightmap_debug(packed_graph, output_path, template_name, seed):
     land_cells = np.sum(packed_graph.heights >= 20)
     water_cells = np.sum(packed_graph.heights < 20)
     land_pct = (land_cells / len(packed_graph.heights)) * 100
-    
+
     ax.text(
-        0.02, 0.98,
+        0.02,
+        0.98,
         f"Height: {min_height}-{max_height} (avg: {avg_height:.1f})\n"
         f"Land: {land_cells:,} cells ({land_pct:.1f}%)\n"
         f"Water: {water_cells:,} cells ({100-land_pct:.1f}%)\n"
@@ -438,11 +441,11 @@ def generate_heightmap_debug(packed_graph, output_path, template_name, seed):
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
         fontsize=10,
     )
-    
+
     # Remove axis ticks for cleaner look
     ax.set_xticks([])
     ax.set_yticks([])
-    
+
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
@@ -451,14 +454,14 @@ def generate_heightmap_debug(packed_graph, output_path, template_name, seed):
 def generate_climate_debug(climate, packed_graph, output_path, template_name, seed):
     """Generate debug visualization showing temperature and precipitation."""
     from matplotlib.colors import LinearSegmentedColormap
-    
+
     # Create figure with 1x2 subplots
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
-    
+
     # Get dimensions
     width = packed_graph.graph_width
     height = packed_graph.graph_height
-    
+
     # Subplot 1: Temperature
     temp_scatter = ax1.scatter(
         *packed_graph.points.T,
@@ -474,20 +477,21 @@ def generate_climate_debug(climate, packed_graph, output_path, template_name, se
     ax1.set_aspect("equal")
     ax1.set_title("Temperature Distribution (°C)", fontsize=14)
     plt.colorbar(temp_scatter, ax=ax1, label="Temperature (°C)")
-    
+
     # Add temperature statistics
     avg_temp = np.mean(climate.temperatures)
     min_temp = np.min(climate.temperatures)
     max_temp = np.max(climate.temperatures)
     ax1.text(
-        0.02, 0.98,
+        0.02,
+        0.98,
         f"Avg: {avg_temp:.1f}°C\nMin: {min_temp:.1f}°C\nMax: {max_temp:.1f}°C",
         transform=ax1.transAxes,
         verticalalignment="top",
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
         fontsize=10,
     )
-    
+
     # Subplot 2: Precipitation
     precip_scatter = ax2.scatter(
         *packed_graph.points.T,
@@ -503,41 +507,44 @@ def generate_climate_debug(climate, packed_graph, output_path, template_name, se
     ax2.set_aspect("equal")
     ax2.set_title("Precipitation Distribution (mm)", fontsize=14)
     plt.colorbar(precip_scatter, ax=ax2, label="Precipitation (mm)")
-    
+
     # Add precipitation statistics
     avg_precip = np.mean(climate.precipitation)
     min_precip = np.min(climate.precipitation)
     max_precip = np.max(climate.precipitation)
     ax2.text(
-        0.02, 0.98,
+        0.02,
+        0.98,
         f"Avg: {avg_precip:.1f}mm\nMin: {min_precip:.1f}mm\nMax: {max_precip:.1f}mm",
         transform=ax2.transAxes,
         verticalalignment="top",
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
         fontsize=10,
     )
-    
+
     # Add overall title
     title = f"{template_name.title()} - Climate Analysis (Seed: {seed})"
     fig.suptitle(title, fontsize=16)
-    
+
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
 
 
-def generate_hydrology_debug(rivers, hydrology, packed_graph, output_path, template_name, seed):
+def generate_hydrology_debug(
+    rivers, hydrology, packed_graph, output_path, template_name, seed
+):
     """Generate debug visualization showing river networks and discharge."""
     from matplotlib.colors import LinearSegmentedColormap
     import matplotlib.patches as mpatches
-    
+
     # Create figure with 1x2 subplots
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
-    
+
     # Get dimensions
     width = packed_graph.graph_width
     height = packed_graph.graph_height
-    
+
     # Subplot 1: River Network with Discharge
     # Plot base terrain
     terrain_scatter = ax1.scatter(
@@ -549,14 +556,14 @@ def generate_hydrology_debug(rivers, hydrology, packed_graph, output_path, templ
         vmin=0,
         vmax=100,
     )
-    
+
     # Plot rivers colored by discharge
     if rivers:
         river_discharges = []
         river_points_x = []
         river_points_y = []
         river_widths = []
-        
+
         for river_id, river_data in rivers.items():
             if river_data.cells and river_data.discharge > 0:
                 for cell_id in river_data.cells:
@@ -565,8 +572,10 @@ def generate_hydrology_debug(rivers, hydrology, packed_graph, output_path, templ
                         river_points_x.append(point[0])
                         river_points_y.append(point[1])
                         river_discharges.append(river_data.discharge)
-                        river_widths.append(max(river_data.width * 2, 20))  # Scale for visibility
-        
+                        river_widths.append(
+                            max(river_data.width * 2, 20)
+                        )  # Scale for visibility
+
         if river_discharges:
             river_scatter = ax1.scatter(
                 river_points_x,
@@ -575,18 +584,18 @@ def generate_hydrology_debug(rivers, hydrology, packed_graph, output_path, templ
                 cmap="Blues",
                 s=river_widths,
                 alpha=0.8,
-                edgecolors='navy',
+                edgecolors="navy",
                 linewidths=0.5,
                 vmin=0,
                 vmax=max(river_discharges),
             )
             plt.colorbar(river_scatter, ax=ax1, label="Discharge (m³/s)")
-    
+
     ax1.set_xlim(0, width)
     ax1.set_ylim(0, height)
     ax1.set_aspect("equal")
     ax1.set_title("River Network by Discharge", fontsize=14)
-    
+
     # Add river statistics
     if rivers:
         total_rivers = len(rivers)
@@ -594,9 +603,10 @@ def generate_hydrology_debug(rivers, hydrology, packed_graph, output_path, templ
         tributary_rivers = total_rivers - main_rivers
         max_discharge = max(r.discharge for r in rivers.values()) if rivers else 0
         avg_discharge = np.mean([r.discharge for r in rivers.values()]) if rivers else 0
-        
+
         ax1.text(
-            0.02, 0.98,
+            0.02,
+            0.98,
             f"Total: {total_rivers} rivers\nMain: {main_rivers}\nTributaries: {tributary_rivers}\n"
             f"Max discharge: {max_discharge:.1f} m³/s\nAvg discharge: {avg_discharge:.1f} m³/s",
             transform=ax1.transAxes,
@@ -604,7 +614,7 @@ def generate_hydrology_debug(rivers, hydrology, packed_graph, output_path, templ
             bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
             fontsize=9,
         )
-    
+
     # Subplot 2: Flow Accumulation
     flux_scatter = ax2.scatter(
         *packed_graph.points.T,
@@ -620,14 +630,15 @@ def generate_hydrology_debug(rivers, hydrology, packed_graph, output_path, templ
     ax2.set_aspect("equal")
     ax2.set_title("Water Flow Accumulation", fontsize=14)
     plt.colorbar(flux_scatter, ax=ax2, label="Flow Accumulation (m³/s)")
-    
+
     # Add flux statistics
     max_flux = np.max(hydrology.flux)
     avg_flux = np.mean(hydrology.flux)
     river_threshold = hydrology.options.min_river_flux
-    
+
     ax2.text(
-        0.02, 0.98,
+        0.02,
+        0.98,
         f"Max flux: {max_flux:.1f} m³/s\nAvg flux: {avg_flux:.1f} m³/s\n"
         f"River threshold: {river_threshold} m³/s",
         transform=ax2.transAxes,
@@ -635,11 +646,142 @@ def generate_hydrology_debug(rivers, hydrology, packed_graph, output_path, templ
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
         fontsize=10,
     )
-    
+
     # Add overall title
     title = f"{template_name.title()} - Hydrology Analysis (Seed: {seed})"
     fig.suptitle(title, fontsize=16)
-    
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+
+def generate_biome_debug(
+    biome_classifier, biomes, climate, packed_graph, output_path, template_name, seed
+):
+    """Generate debug visualization showing biome distribution and classification."""
+    from matplotlib.colors import ListedColormap
+    import matplotlib.patches as mpatches
+
+    # Create figure with 2x2 subplots
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+
+    # Get dimensions
+    width = packed_graph.graph_width
+    height = packed_graph.graph_height
+
+    # Create biome colormap using actual biome colors
+    biome_colors = [biome_classifier.get_biome_color(i) for i in range(13)]
+    biome_cmap = ListedColormap(biome_colors)
+
+    # Subplot 1: Biome Distribution
+    biome_scatter = ax1.scatter(
+        *packed_graph.points.T,
+        c=biomes,
+        cmap=biome_cmap,
+        s=25,
+        alpha=0.8,
+        vmin=0,
+        vmax=12,
+    )
+    ax1.set_xlim(0, width)
+    ax1.set_ylim(0, height)
+    ax1.set_aspect("equal")
+    ax1.set_title("Biome Distribution", fontsize=14)
+
+    # Create biome legend
+    biome_patches = []
+    unique_biomes = np.unique(biomes)
+    for biome_id in unique_biomes:
+        name = biome_classifier.get_biome_name(biome_id)
+        color = biome_classifier.get_biome_color(biome_id)
+        count = np.sum(biomes == biome_id)
+        patch = mpatches.Patch(color=color, label=f"{name} ({count})")
+        biome_patches.append(patch)
+
+    ax1.legend(
+        handles=biome_patches, bbox_to_anchor=(1.05, 1), loc="upper left", fontsize=9
+    )
+
+    # Subplot 2: Temperature vs Biome
+    temp_scatter = ax2.scatter(
+        *packed_graph.points.T,
+        c=climate.temperatures,
+        cmap="RdYlBu_r",
+        s=25,
+        alpha=0.7,
+        vmin=-30,
+        vmax=30,
+    )
+    ax2.set_xlim(0, width)
+    ax2.set_ylim(0, height)
+    ax2.set_aspect("equal")
+    ax2.set_title("Temperature Distribution", fontsize=14)
+    plt.colorbar(temp_scatter, ax=ax2, label="Temperature (°C)")
+
+    # Subplot 3: Precipitation vs Biome
+    precip_scatter = ax3.scatter(
+        *packed_graph.points.T,
+        c=climate.precipitation,
+        cmap="Blues",
+        s=25,
+        alpha=0.7,
+        vmin=0,
+        vmax=np.max(climate.precipitation),
+    )
+    ax3.set_xlim(0, width)
+    ax3.set_ylim(0, height)
+    ax3.set_aspect("equal")
+    ax3.set_title("Precipitation Distribution", fontsize=14)
+    plt.colorbar(precip_scatter, ax=ax3, label="Precipitation (mm)")
+
+    # Subplot 4: Biome Statistics
+    biome_counts = np.bincount(biomes, minlength=13)
+    biome_names = [biome_classifier.get_biome_name(i) for i in range(13)]
+
+    # Only plot biomes that exist
+    existing_biomes = biome_counts > 0
+    plot_counts = biome_counts[existing_biomes]
+    plot_names = [name for i, name in enumerate(biome_names) if existing_biomes[i]]
+    plot_colors = [biome_colors[i] for i in range(13) if existing_biomes[i]]
+
+    bars = ax4.bar(range(len(plot_counts)), plot_counts, color=plot_colors, alpha=0.8)
+    ax4.set_xlabel("Biome Type")
+    ax4.set_ylabel("Cell Count")
+    ax4.set_title("Biome Distribution Statistics", fontsize=14)
+    ax4.set_xticks(range(len(plot_names)))
+    ax4.set_xticklabels(plot_names, rotation=45, ha="right", fontsize=9)
+
+    # Add percentage labels on bars
+    total_cells = len(biomes)
+    for i, (bar, count) in enumerate(zip(bars, plot_counts)):
+        percentage = (count / total_cells) * 100
+        ax4.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + max(plot_counts) * 0.01,
+            f"{percentage:.1f}%",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
+
+    # Add biome classification statistics
+    ax4.text(
+        0.02,
+        0.98,
+        f"Total cells: {total_cells:,}\nBiome types: {len(plot_counts)}\n"
+        f"Dominant: {plot_names[np.argmax(plot_counts)]}\n"
+        f"Coverage: {np.max(plot_counts)/total_cells*100:.1f}%",
+        transform=ax4.transAxes,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+        fontsize=9,
+    )
+
+    # Add overall title
+    title = f"{template_name.title()} - Biome Classification Analysis (Seed: {seed})"
+    fig.suptitle(title, fontsize=16)
+
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
@@ -678,16 +820,12 @@ def test_full_pipeline_with_visualization(
     assert voronoi_graph.cells_x > 0
     assert voronoi_graph.cells_y > 0
     print(f"Generated {len(voronoi_graph.points)} Voronoi cells")
-    
+
     # Generate initial Voronoi debug image if requested
     if generate_debug_images:
-        voronoi_path = (
-            output_dir / f"{template}_1_voronoi_{timestamp}.png"
-        )
+        voronoi_path = output_dir / f"{template}_1_voronoi_{timestamp}.png"
         print("Generating initial Voronoi debug visualization...")
-        generate_voronoi_debug(
-            voronoi_graph, voronoi_path, template, seed
-        )
+        generate_voronoi_debug(voronoi_graph, voronoi_path, template, seed)
         print(f"Initial Voronoi saved to {voronoi_path}")
 
     # Stage 3: Generate heightmap
@@ -779,13 +917,9 @@ def test_full_pipeline_with_visualization(
 
     # Generate Stage 4: Final heightmap visualization
     if generate_debug_images:
-        final_heightmap_path = (
-            output_dir / f"{template}_4_heightmap_{timestamp}.png"
-        )
+        final_heightmap_path = output_dir / f"{template}_4_heightmap_{timestamp}.png"
         print("Generating final heightmap visualization...")
-        generate_heightmap_debug(
-            packed_graph, final_heightmap_path, template, seed
-        )
+        generate_heightmap_debug(packed_graph, final_heightmap_path, template, seed)
         print(f"Final heightmap saved to {final_heightmap_path}")
 
     # Stage 6: Mark up features on packed graph
@@ -798,16 +932,12 @@ def test_full_pipeline_with_visualization(
     climate = Climate(packed_graph)
     climate.calculate_temperatures()
     climate.generate_precipitation()
-    
+
     # Generate climate debug image if requested
     if generate_debug_images:
-        climate_path = (
-            output_dir / f"{template}_5_climate_{timestamp}.png"
-        )
+        climate_path = output_dir / f"{template}_5_climate_{timestamp}.png"
         print("Generating climate debug visualization...")
-        generate_climate_debug(
-            climate, packed_graph, climate_path, template, seed
-        )
+        generate_climate_debug(climate, packed_graph, climate_path, template, seed)
         print(f"Climate visualization saved to {climate_path}")
 
     # Verify climate calculations
@@ -820,12 +950,10 @@ def test_full_pipeline_with_visualization(
     print("Generating hydrology system...")
     hydrology = Hydrology(packed_graph, packed_features, climate)
     rivers = hydrology.generate_rivers()
-    
+
     # Generate hydrology debug image if requested
     if generate_debug_images:
-        hydrology_path = (
-            output_dir / f"{template}_6_hydrology_{timestamp}.png"
-        )
+        hydrology_path = output_dir / f"{template}_6_hydrology_{timestamp}.png"
         print("Generating hydrology debug visualization...")
         generate_hydrology_debug(
             rivers, hydrology, packed_graph, hydrology_path, template, seed
@@ -836,17 +964,70 @@ def test_full_pipeline_with_visualization(
     assert isinstance(rivers, dict)
     assert len(rivers) >= 0  # May have 0 rivers for some templates
     for river_id, river_data in rivers.items():
-        assert hasattr(river_data, 'discharge')
-        assert hasattr(river_data, 'width')
-        assert hasattr(river_data, 'length')
-        assert hasattr(river_data, 'cells')
+        assert hasattr(river_data, "discharge")
+        assert hasattr(river_data, "width")
+        assert hasattr(river_data, "length")
+        assert hasattr(river_data, "cells")
         assert river_data.discharge >= 0
         assert river_data.width >= 0
         assert len(river_data.cells) > 0
 
-    print(f"Generated {len(rivers)} rivers with max discharge: {max(r.discharge for r in rivers.values()) if rivers else 0:.1f} m³/s")
+    print(
+        f"Generated {len(rivers)} rivers with max discharge: {max(r.discharge for r in rivers.values()) if rivers else 0:.1f} m³/s"
+    )
 
-    # Stage 9: Generate comprehensive final visualization
+    # Stage 9: Generate biomes
+    print("Classifying biomes...")
+    biome_classifier = BiomeClassifier()
+
+    # Prepare data for biome classification
+    temperatures = climate.temperatures
+    precipitation = climate.precipitation
+    heights = packed_graph.heights
+
+    # Create river presence array
+    has_river = np.zeros(len(packed_graph.points), dtype=bool)
+    river_flux = np.zeros(len(packed_graph.points), dtype=float)
+
+    for river_id, river_data in rivers.items():
+        for cell_id in river_data.cells:
+            if cell_id < len(has_river):
+                has_river[cell_id] = True
+                river_flux[cell_id] = max(river_flux[cell_id], river_data.discharge)
+
+    # Classify biomes
+    biomes = biome_classifier.classify_biomes(
+        temperatures=temperatures,
+        precipitation=precipitation,
+        heights=heights,
+        river_flux=river_flux,
+        has_river=has_river,
+    )
+
+    # Generate biome debug image if requested
+    if generate_debug_images:
+        biome_path = output_dir / f"{template}_7_biomes_{timestamp}.png"
+        print("Generating biome debug visualization...")
+        generate_biome_debug(
+            biome_classifier, biomes, climate, packed_graph, biome_path, template, seed
+        )
+        print(f"Biome visualization saved to {biome_path}")
+
+    # Verify biome classification
+    assert len(biomes) == len(packed_graph.points)
+    assert biomes.dtype == np.uint8
+    assert np.all(biomes >= 0)
+    assert np.all(biomes <= 12)
+
+    # Print biome statistics
+    unique_biomes, counts = np.unique(biomes, return_counts=True)
+    print(f"Generated {len(unique_biomes)} different biome types:")
+    for biome_id, count in zip(unique_biomes, counts):
+        biome_name = biome_classifier.get_biome_name(biome_id)
+        percentage = (count / len(biomes)) * 100
+        print(f"  - {biome_name}: {count} cells ({percentage:.1f}%)")
+
+    # Stage 10: Generate comprehensive final visualization
     print("Generating visualization...")
 
     # Import needed for interpolation
@@ -936,7 +1117,8 @@ def test_full_pipeline_with_visualization(
     pipeline_text += "✓ Features.markupGrid\n"
     pipeline_text += "✓ reGraph (coastal enhancement)\n"
     pipeline_text += "✓ Climate system\n"
-    pipeline_text += "✓ Hydrology + rivers"
+    pipeline_text += "✓ Hydrology + rivers\n"
+    pipeline_text += "✓ Biome classification"
 
     ax.text(
         0.02,
@@ -961,8 +1143,8 @@ def test_full_pipeline_with_visualization(
         family="monospace",
     )
 
-    # Save comprehensive final visualization  
-    output_filename = f"{template}_7_comprehensive_{timestamp}.png"
+    # Save comprehensive final visualization
+    output_filename = f"{template}_8_comprehensive_{timestamp}.png"
     output_path = output_dir / output_filename
     plt.savefig(output_path, dpi=150, bbox_inches="tight", pad_inches=0.1)
     plt.close()
@@ -981,6 +1163,8 @@ def test_full_pipeline_with_visualization(
         "climate": climate,
         "hydrology": hydrology,
         "rivers": rivers,
+        "biome_classifier": biome_classifier,
+        "biomes": biomes,
         "visualization_path": output_path,
     }
 
@@ -991,6 +1175,7 @@ def test_full_pipeline_with_visualization(
         results["final_heightmap_path"] = final_heightmap_path
         results["climate_path"] = climate_path
         results["hydrology_path"] = hydrology_path
+        results["biome_path"] = biome_path
 
     return results
 
@@ -1028,22 +1213,22 @@ def test_pipeline_error_handling():
     )
 
 
-def test_complete_pipeline_with_climate_and_hydrology(
-    template="atoll", seed=None
-):
+def test_complete_pipeline_with_climate_and_hydrology(template="atoll", seed=None):
     """Test the complete map generation pipeline including climate and hydrology.
-    
+
     Args:
         template: Heightmap template name
         seed: Single seed used for all stages (defaults to DEFAULT_SEED)
     """
     # Use default if not provided
     seed = seed or DEFAULT_SEED
-    
+
     # Stage 1: Generate Voronoi graph
-    config = GridConfig(width=TEST_WIDTH, height=TEST_HEIGHT, cells_desired=TEST_CELLS_DESIRED)
+    config = GridConfig(
+        width=TEST_WIDTH, height=TEST_HEIGHT, cells_desired=TEST_CELLS_DESIRED
+    )
     voronoi_graph = generate_voronoi_graph(config, seed=seed)
-    
+
     # Stage 2: Generate heightmap
     heightmap_config = HeightmapConfig(
         width=int(TEST_WIDTH),
@@ -1053,65 +1238,105 @@ def test_complete_pipeline_with_climate_and_hydrology(
         cells_desired=TEST_CELLS_DESIRED,
         spacing=voronoi_graph.spacing,
     )
-    
+
     heightmap_gen = HeightmapGenerator(heightmap_config, voronoi_graph, seed=seed)
     heights = heightmap_gen.from_template(template, seed=seed)
     voronoi_graph.heights = heights
-    
+
     # Stage 3: Mark up features
     features = Features(voronoi_graph, seed=seed)
     features.markup_grid()
-    
+
     # Stage 4: Perform reGraph coastal enhancement
     packed_graph = regraph(voronoi_graph)
-    
+
     # Stage 5: Mark up features on packed graph
     packed_features = Features(packed_graph, seed=seed)
     packed_features.markup_grid()
-    
+
     # Stage 6: Calculate climate
     climate = Climate(packed_graph)  # Use default options and coordinates
     climate.calculate_temperatures()
     climate.generate_precipitation()
-    
+
     # Verify climate calculations
     assert hasattr(climate, "temperatures")
     assert hasattr(climate, "precipitation")
     assert len(climate.temperatures) == len(packed_graph.points)
     assert len(climate.precipitation) == len(packed_graph.points)
-    
+
     # Stage 7: Generate hydrology system
     hydrology = Hydrology(packed_graph, packed_features, climate)
     rivers = hydrology.generate_rivers()
-    
+
     # Verify hydrology system
     assert isinstance(rivers, dict)
     # Should generate some rivers for realistic terrain
     assert len(rivers) > 0
     # Verify river data structure
     for river_id, river_data in rivers.items():
-        assert hasattr(river_data, 'discharge')
-        assert hasattr(river_data, 'width')
-        assert hasattr(river_data, 'length')
-        assert hasattr(river_data, 'cells')
+        assert hasattr(river_data, "discharge")
+        assert hasattr(river_data, "width")
+        assert hasattr(river_data, "length")
+        assert hasattr(river_data, "cells")
         assert river_data.discharge >= 0
         assert river_data.width >= 0
         assert len(river_data.cells) > 0
-    
+
+    # Stage 8: Generate biomes
+    biome_classifier = BiomeClassifier()
+
+    # Prepare data for biome classification
+    temperatures = climate.temperatures
+    precipitation = climate.precipitation
+    heights = packed_graph.heights
+
+    # Create river presence array
+    has_river = np.zeros(len(packed_graph.points), dtype=bool)
+    river_flux = np.zeros(len(packed_graph.points), dtype=float)
+
+    for river_id, river_data in rivers.items():
+        for cell_id in river_data.cells:
+            if cell_id < len(has_river):
+                has_river[cell_id] = True
+                river_flux[cell_id] = max(river_flux[cell_id], river_data.discharge)
+
+    # Classify biomes
+    biomes = biome_classifier.classify_biomes(
+        temperatures=temperatures,
+        precipitation=precipitation,
+        heights=heights,
+        river_flux=river_flux,
+        has_river=has_river,
+    )
+
+    # Verify biome classification
+    assert len(biomes) == len(packed_graph.points)
+    assert biomes.dtype == np.uint8
+    assert np.all(biomes >= 0)
+    assert np.all(biomes <= 12)
+
     print(f"✓ Voronoi: {len(voronoi_graph.points)} cells generated")
     print(f"✓ Heightmap: {heights.min()}-{heights.max()} height range")
     print(f"✓ Features: {len(features.features)} features detected")
     print(f"✓ Packed: {len(packed_graph.points)} cells after coastal enhancement")
-    print(f"✓ Climate: {len(climate.temperatures)} temperature points, {len(climate.precipitation)} precipitation points")
-    print(f"✓ Hydrology: {len(rivers)} rivers generated with realistic discharge values")
-    
+    print(
+        f"✓ Climate: {len(climate.temperatures)} temperature points, {len(climate.precipitation)} precipitation points"
+    )
+    print(
+        f"✓ Hydrology: {len(rivers)} rivers generated with realistic discharge values"
+    )
+    print(f"✓ Biomes: {len(np.unique(biomes))} different biome types classified")
+
     return {
         "voronoi_graph": voronoi_graph,
         "packed_graph": packed_graph,
         "features": features,
         "packed_features": packed_features,
         "climate": climate,
-        "rivers": rivers
+        "rivers": rivers,
+        "biome_classifier": biome_classifier,
+        "biomes": biomes,
     }
 
 
