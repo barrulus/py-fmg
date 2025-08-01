@@ -10,17 +10,17 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from ..config import settings
 from ..core.biomes import BiomeClassifier
 from ..core.cell_packing import regraph
 from ..core.climate import Climate
+from ..core.cultures import CultureGenerator
 from ..core.features import Features
 from ..core.heightmap_generator import HeightmapConfig, HeightmapGenerator
 from ..core.hydrology import Hydrology
 from ..core.name_generator import NameGenerator
 from ..core.settlements import Settlements
 from ..core.voronoi_graph import GridConfig, generate_voronoi_graph
-
-from ..config import settings
 from ..db.connection import db
 from ..db.models import GenerationJob, Map
 
@@ -377,7 +377,7 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
         # Stage 7: Generate rivers (70% progress)
         logger.info("Generating rivers", job_id=job_id)
         hydrology = Hydrology(packed_graph, features, climate)
-        hydrology.generate_rivers()
+        rivers = hydrology.generate_rivers()
 
         # Update progress
         with db.get_session() as session:
@@ -385,12 +385,42 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
             job.progress_percent = 70
             session.commit()
 
-        # Stage 8: Generate biomes (80% progress)
+        # Stage 8: Generate cultures (75% progress)
+        logger.info("Generating cultures", job_id=job_id)
+        culture_generator = CultureGenerator(packed_graph, features)
+        cultures_dict, cell_cultures, cell_population, cell_suitability = culture_generator.generate()
+
+        # Store population data on the graph for settlements to use
+        packed_graph.cell_population = cell_population
+        packed_graph.cell_suitability = cell_suitability
+
+        # Update progress
+        with db.get_session() as session:
+            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job.progress_percent = 75
+            session.commit()
+
+        # Stage 9: Generate biomes (80% progress)
         logger.info("Generating biomes", job_id=job_id)
         biome_classifier = BiomeClassifier()
-        # Assign simple biome classification for now (grassland = 4)
-        cell_biomes = np.full(
-            len(packed_graph.points), 4, dtype=np.uint8  # Grassland biome
+
+        # Prepare river data for biome classification
+        has_river = np.zeros(len(packed_graph.points), dtype=bool)
+        river_flux = np.zeros(len(packed_graph.points), dtype=float)
+
+        for river_id, river_data in rivers.items():
+            for cell_id in river_data.cells:
+                if cell_id < len(has_river):  # Safety check
+                    has_river[cell_id] = True
+                    river_flux[cell_id] = max(river_flux[cell_id], river_data.discharge)
+
+        # Classify biomes using climate and terrain data
+        cell_biomes = biome_classifier.classify_biomes(
+            temperatures=climate.temperatures,
+            precipitation=climate.precipitation,
+            heights=packed_graph.heights,
+            river_flux=river_flux,
+            has_river=has_river
         )
 
         # Update progress
@@ -399,15 +429,37 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
             job.progress_percent = 80
             session.commit()
 
-        # Stage 9: Generate settlements (90% progress)
-        logger.info("Generating settlements", job_id=job_id)
-        # name_generator = NameGenerator()  # Not used yet
+        # Stage 10: Generate religions (85% progress)
+        logger.info("Generating religions", job_id=job_id)
+        from ..core.religions import ReligionGenerator
+        
+        # Create name generator for both religions and settlements
+        name_generator = NameGenerator()
+        
+        religion_generator = ReligionGenerator(
+            packed_graph,
+            cultures_dict,
+            cell_cultures,
+            {},  # settlements_dict (empty at this stage)
+            {},  # states_dict (would be generated later in full implementation)
+            name_generator=name_generator  # Pass name generator for culture-based deity names
+        )
+        religions_dict, cell_religions = religion_generator.generate()
+        
+        # Update progress
+        with db.get_session() as session:
+            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job.progress_percent = 85
+            session.commit()
 
-        # Create simple mock cultures and biome wrapper for settlement generation
-        class MockCultures:
-            def __init__(self, n_cells: int) -> None:
-                self.cell_cultures = np.ones(n_cells, dtype=np.int32)
-                self.cultures = {1: type('Culture', (), {'center': min(50, n_cells-1)})}
+        # Stage 11: Generate settlements (90% progress)
+        logger.info("Generating settlements", job_id=job_id)
+
+        # Create cultures wrapper that matches expected interface
+        class CulturesWrapper:
+            def __init__(self, cultures_dict: Dict, cell_cultures: np.ndarray) -> None:
+                self.cultures = cultures_dict
+                self.cell_cultures = cell_cultures
 
         class BiomeWrapper:
             def __init__(
@@ -419,10 +471,20 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
             def get_biome_properties(self, biome_id: int) -> Dict:
                 return self.classifier.get_biome_properties(biome_id)
 
-        mock_cultures = MockCultures(len(packed_graph.points))
+        cultures_wrapper = CulturesWrapper(cultures_dict, cell_cultures)
         biome_wrapper = BiomeWrapper(cell_biomes, biome_classifier)
-        settlements = Settlements(packed_graph, features, mock_cultures, biome_wrapper)
+        settlements = Settlements(
+            packed_graph, 
+            features, 
+            cultures_wrapper, 
+            biome_wrapper, 
+            name_generator,
+            cell_religions=cell_religions
+        )
         settlements.generate()
+        
+        # Assign temples based on religion system
+        religion_generator.assign_temples_to_settlements(settlements.settlements)
 
         # Update progress
         with db.get_session() as session:
@@ -430,7 +492,7 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
             job.progress_percent = 90
             session.commit()
 
-        # Stage 10: Save to database (100% progress)
+        # Stage 12: Save to database (100% progress)
 
         # For now, create a basic map record
         with db.get_session() as session:
