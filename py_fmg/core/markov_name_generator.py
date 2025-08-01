@@ -6,8 +6,7 @@ for generating fantasy names.
 
 from __future__ import annotations
 
-import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
 from py_fmg.core.alea_prng import AleaPRNG
@@ -18,6 +17,7 @@ class MarkovChain:
     """Markov chain for name generation."""
     
     data: Dict[str, List[str]]
+    original_names: List[str] = field(default_factory=list)  # Store original names for fallback
     
     @classmethod
     def from_names(cls, names: List[str]) -> MarkovChain:
@@ -48,7 +48,10 @@ class MarkovChain:
                 chain[prev] = []
             chain[prev].append("")  # End token
         
-        return cls(data=chain)
+        # Store original names for FMG-compatible fallback
+        original_names = [name for name in names if name and len(name) >= 2]
+        
+        return cls(data=chain, original_names=original_names)
     
     @staticmethod
     def _split_into_syllables(name: str) -> List[str]:
@@ -239,8 +242,18 @@ class MarkovNameGenerator:
         return final_name
     
     def _get_fallback_name(self, chain: MarkovChain) -> str:
-        """Get a fallback name from the chain data."""
-        # Find all complete paths in the chain
+        """
+        Get a fallback name using FMG's approach.
+        
+        When Markov generation fails, FMG selects a random name from the original
+        name list (nameBases[base].b.split(",")). This ensures authentic, 
+        culturally appropriate names.
+        """
+        if chain.original_names:
+            # FMG's approach: select random name from original list
+            return self.prng.choice(chain.original_names)
+        
+        # Secondary fallback: reconstruct from syllables (legacy approach)
         all_syllables = set()
         for syllables in chain.data.values():
             all_syllables.update(s for s in syllables if s)
