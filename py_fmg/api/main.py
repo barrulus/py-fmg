@@ -15,6 +15,9 @@ from ..core.voronoi_graph import GridConfig, generate_voronoi_graph
 from ..core.heightmap_generator import HeightmapGenerator, HeightmapConfig
 from ..core.cell_packing import regraph
 from ..core.features import Features
+from ..core.climate import Climate, ClimateOptions, MapCoordinates
+from ..core.hydrology import Hydrology, HydrologyOptions
+from ..core.biomes import BiomeClassifier, BiomeOptions
 
 # Configure logging
 structlog.configure(
@@ -87,6 +90,52 @@ class MapSummary(BaseModel):
     cells_count: int
     created_at: datetime
     generation_time_seconds: Optional[float]
+
+
+class BiomeStatistics(BaseModel):
+    """Biome distribution statistics for a map."""
+    
+    biome_name: str
+    cell_count: int
+    percentage: float
+    avg_temperature: Optional[float] = None
+    avg_precipitation: Optional[float] = None
+
+
+class RiverInfo(BaseModel):
+    """Information about a river."""
+    
+    id: int
+    length: float
+    flow: float
+    source_cell: int
+    mouth_cell: int
+    cell_count: int
+
+
+class MapStatistics(BaseModel):
+    """Comprehensive statistics about a generated map."""
+    
+    map_id: str
+    total_cells: int
+    land_cells: int
+    water_cells: int
+    rivers_count: int
+    lakes_count: int
+    biome_distribution: List[BiomeStatistics]
+    major_rivers: List[RiverInfo]
+    temperature_range: Tuple[float, float]
+    precipitation_range: Tuple[float, float]
+
+
+class ClimateData(BaseModel):
+    """Climate data for a specific cell or region."""
+    
+    cell_index: int
+    temperature: int
+    precipitation: int
+    biome: str
+    height: int
 
 
 # Event handlers
@@ -248,6 +297,112 @@ async def get_map(map_id: str):
         )
 
 
+@app.get("/maps/{map_id}/statistics", response_model=MapStatistics)
+async def get_map_statistics(map_id: str):
+    """Get comprehensive statistics for a map."""
+    with db.get_session() as session:
+        map_obj = session.query(Map).filter(Map.id == map_id).first()
+        
+        if not map_obj:
+            raise HTTPException(status_code=404, detail="Map not found")
+        
+        # For now, return mock statistics since we don't store the graph data yet
+        # In a full implementation, this would load the graph data and calculate real statistics
+        
+        mock_biome_stats = [
+            BiomeStatistics(biome_name="Ocean", cell_count=3000, percentage=30.0, avg_temperature=15.0, avg_precipitation=100.0),
+            BiomeStatistics(biome_name="Temperate Forest", cell_count=2500, percentage=25.0, avg_temperature=12.0, avg_precipitation=120.0),
+            BiomeStatistics(biome_name="Grassland", cell_count=2000, percentage=20.0, avg_temperature=18.0, avg_precipitation=80.0),
+            BiomeStatistics(biome_name="Desert", cell_count=1500, percentage=15.0, avg_temperature=25.0, avg_precipitation=20.0),
+            BiomeStatistics(biome_name="Mountains", cell_count=1000, percentage=10.0, avg_temperature=5.0, avg_precipitation=150.0),
+        ]
+        
+        mock_rivers = [
+            RiverInfo(id=1, length=250.5, flow=150.0, source_cell=100, mouth_cell=5000, cell_count=45),
+            RiverInfo(id=2, length=180.2, flow=80.0, source_cell=200, mouth_cell=4800, cell_count=32),
+            RiverInfo(id=3, length=120.8, flow=45.0, source_cell=300, mouth_cell=4500, cell_count=22),
+        ]
+        
+        return MapStatistics(
+            map_id=str(map_obj.id),
+            total_cells=map_obj.cells_count,
+            land_cells=int(map_obj.cells_count * 0.7),  # Mock: 70% land
+            water_cells=int(map_obj.cells_count * 0.3),  # Mock: 30% water
+            rivers_count=15,  # Mock
+            lakes_count=5,    # Mock
+            biome_distribution=mock_biome_stats,
+            major_rivers=mock_rivers,
+            temperature_range=(-10.0, 35.0),  # Mock temperature range
+            precipitation_range=(10.0, 200.0)  # Mock precipitation range
+        )
+
+
+@app.get("/maps/{map_id}/climate/{cell_index}", response_model=ClimateData)
+async def get_cell_climate(map_id: str, cell_index: int):
+    """Get climate data for a specific cell."""
+    with db.get_session() as session:
+        map_obj = session.query(Map).filter(Map.id == map_id).first()
+        
+        if not map_obj:
+            raise HTTPException(status_code=404, detail="Map not found")
+        
+        if cell_index < 0 or cell_index >= map_obj.cells_count:
+            raise HTTPException(status_code=400, detail="Invalid cell index")
+        
+        # For now, return mock data
+        # In a full implementation, this would load the actual graph data
+        
+        return ClimateData(
+            cell_index=cell_index,
+            temperature=15,  # Mock temperature
+            precipitation=100,  # Mock precipitation
+            biome="Temperate Forest",  # Mock biome
+            height=45  # Mock height
+        )
+
+
+@app.get("/maps/{map_id}/biomes", response_model=List[BiomeStatistics])
+async def get_map_biomes(map_id: str):
+    """Get biome distribution for a map."""
+    with db.get_session() as session:
+        map_obj = session.query(Map).filter(Map.id == map_id).first()
+        
+        if not map_obj:
+            raise HTTPException(status_code=404, detail="Map not found")
+        
+        # For now, return mock biome data
+        # In a full implementation, this would load the actual biome data from the graph
+        
+        return [
+            BiomeStatistics(biome_name="Ocean", cell_count=3000, percentage=30.0, avg_temperature=15.0, avg_precipitation=100.0),
+            BiomeStatistics(biome_name="Temperate Deciduous Forest", cell_count=2500, percentage=25.0, avg_temperature=12.0, avg_precipitation=120.0),
+            BiomeStatistics(biome_name="Temperate Grassland", cell_count=2000, percentage=20.0, avg_temperature=18.0, avg_precipitation=80.0),
+            BiomeStatistics(biome_name="Desert", cell_count=1500, percentage=15.0, avg_temperature=25.0, avg_precipitation=20.0),
+            BiomeStatistics(biome_name="Alpine", cell_count=1000, percentage=10.0, avg_temperature=5.0, avg_precipitation=150.0),
+        ]
+
+
+@app.get("/maps/{map_id}/rivers", response_model=List[RiverInfo])
+async def get_map_rivers(map_id: str):
+    """Get river information for a map."""
+    with db.get_session() as session:
+        map_obj = session.query(Map).filter(Map.id == map_id).first()
+        
+        if not map_obj:
+            raise HTTPException(status_code=404, detail="Map not found")
+        
+        # For now, return mock river data
+        # In a full implementation, this would load the actual river data from the graph
+        
+        return [
+            RiverInfo(id=1, length=250.5, flow=150.0, source_cell=100, mouth_cell=5000, cell_count=45),
+            RiverInfo(id=2, length=180.2, flow=80.0, source_cell=200, mouth_cell=4800, cell_count=32),
+            RiverInfo(id=3, length=120.8, flow=45.0, source_cell=300, mouth_cell=4500, cell_count=22),
+            RiverInfo(id=4, length=95.3, flow=35.0, source_cell=400, mouth_cell=4200, cell_count=18),
+            RiverInfo(id=5, length=75.1, flow=25.0, source_cell=500, mouth_cell=4000, cell_count=15),
+        ]
+
+
 # Background task functions
 async def run_map_generation(job_id: str, request: MapGenerationRequest):
     """
@@ -346,13 +501,53 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest):
             job.progress_percent = 40
             session.commit()
         
+        # Stage 6: Generate climate (60% progress)
+        logger.info("Generating climate", job_id=job_id)
+        
+        # Use default map coordinates (can be made configurable later)
+        map_coords = MapCoordinates(lat_n=90, lat_s=-90)
+        climate_options = ClimateOptions()
+        
+        climate = Climate(packed_graph, options=climate_options, map_coords=map_coords)
+        climate.calculate_temperatures()
+        climate.generate_precipitation()
+        
+        # Update progress
+        with db.get_session() as session:
+            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job.progress_percent = 60
+            session.commit()
+        
+        # Stage 7: Generate hydrology (70% progress)
+        logger.info("Generating hydrology", job_id=job_id)
+        
+        hydrology_options = HydrologyOptions()
+        hydrology = Hydrology(packed_graph, options=hydrology_options)
+        hydrology.run_full_simulation()
+        
+        # Update progress
+        with db.get_session() as session:
+            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job.progress_percent = 70
+            session.commit()
+        
+        # Stage 8: Generate biomes (80% progress)
+        logger.info("Generating biomes", job_id=job_id)
+        
+        biome_options = BiomeOptions()
+        biome_classifier = BiomeClassifier(packed_graph, options=biome_options)
+        biome_classifier.run_full_classification()
+        
+        # Update progress
+        with db.get_session() as session:
+            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job.progress_percent = 80
+            session.commit()
+        
         # TODO: Add remaining generation stages:
-        # Stage 4: Generate climate (60% progress)  
-        # Stage 5: Generate rivers (70% progress)
-        # Stage 6: Generate biomes (80% progress)
-        # Stage 7: Generate settlements (90% progress)
-        # Stage 8: Generate states (95% progress)
-        # Stage 9: Save to database (100% progress)
+        # Stage 9: Generate settlements (90% progress)
+        # Stage 10: Generate states (95% progress)
+        # Stage 11: Save to database (100% progress)
         
         # For now, create a basic map record
         with db.get_session() as session:
