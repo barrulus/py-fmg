@@ -1,5 +1,14 @@
 """FastAPI main application."""
 
+
+from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from typing import List, Optional, Tuple
+from typing import Optional
+import structlog
+import logging
+
 import uuid
 from datetime import datetime
 from typing import Dict, Optional
@@ -16,6 +25,17 @@ from ..core.cell_packing import regraph
 from ..core.climate import Climate
 from ..core.cultures import CultureGenerator
 from ..core.features import Features
+
+from ..core.climate import Climate, ClimateOptions, MapCoordinates
+from ..core.hydrology import Hydrology, HydrologyOptions
+from ..core.biomes import BiomeClassifier, BiomeOptions
+
+# Set up standard logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    handlers=[logging.StreamHandler()]
+
 from ..core.heightmap_generator import HeightmapConfig, HeightmapGenerator
 from ..core.hydrology import Hydrology
 from ..core.name_generator import NameGenerator
@@ -36,7 +56,7 @@ from ..db.models import (
     Settlement,
 )
 
-# Configure logging
+# Then configure structlog
 structlog.configure(
     processors=[
         structlog.stdlib.filter_by_level,
@@ -107,6 +127,95 @@ class MapSummary(BaseModel):
     cells_count: int
     created_at: datetime
     generation_time_seconds: Optional[float]
+
+
+class BiomeStatistics(BaseModel):
+    """Biome distribution statistics for a map."""
+    
+    biome_name: str
+    cell_count: int
+    percentage: float
+    avg_temperature: Optional[float] = None
+    avg_precipitation: Optional[float] = None
+
+
+class RiverInfo(BaseModel):
+    """Information about a river."""
+    
+    id: int
+    length: float
+    flow: float
+    source_cell: int
+    mouth_cell: int
+    cell_count: int
+
+
+class MapStatistics(BaseModel):
+    """Comprehensive statistics about a generated map."""
+    
+    map_id: str
+    total_cells: int
+    land_cells: int
+    water_cells: int
+    rivers_count: int
+    lakes_count: int
+    biome_distribution: List[BiomeStatistics]
+    major_rivers: List[RiverInfo]
+    temperature_range: Tuple[float, float]
+    precipitation_range: Tuple[float, float]
+
+
+class ClimateData(BaseModel):
+    """Climate data for a specific cell or region."""
+    
+    cell_index: int
+    temperature: int
+    precipitation: int
+    biome: str
+    height: int
+
+
+class CultureInfo(BaseModel):
+    """Information about a culture."""
+    
+    id: int
+    name: str
+    color: str
+    type: str
+    area_km2: float
+    population: int
+    expansionism: float
+    center_cell: int
+
+
+class ReligionInfo(BaseModel):
+    """Information about a religion."""
+    
+    id: int
+    name: str
+    color: str
+    type: str
+    form: str
+    deity: Optional[str]
+    expansion: str
+    expansionism: float
+    area_km2: float
+    rural_population: float
+    urban_population: float
+
+
+class SettlementInfo(BaseModel):
+    """Information about a settlement."""
+    
+    id: int
+    name: str
+    type: str
+    population: int
+    is_capital: bool
+    is_port: bool
+    culture_name: Optional[str]
+    state_name: Optional[str]
+    religion_name: Optional[str]
 
 
 # Event handlers
@@ -273,6 +382,174 @@ async def get_map(map_id: str) -> MapSummary:
         )
 
 
+@app.get("/maps/{map_id}/statistics", response_model=MapStatistics)
+async def get_map_statistics(map_id: str):
+    """Get comprehensive statistics for a map."""
+    with db.get_session() as session:
+        map_obj = session.query(Map).filter(Map.id == map_id).first()
+        
+        if not map_obj:
+            raise HTTPException(status_code=404, detail="Map not found")
+        
+        # For now, return mock statistics since we don't store the graph data yet
+        # In a full implementation, this would load the graph data and calculate real statistics
+        
+        mock_biome_stats = [
+            BiomeStatistics(biome_name="Ocean", cell_count=3000, percentage=30.0, avg_temperature=15.0, avg_precipitation=100.0),
+            BiomeStatistics(biome_name="Temperate Forest", cell_count=2500, percentage=25.0, avg_temperature=12.0, avg_precipitation=120.0),
+            BiomeStatistics(biome_name="Grassland", cell_count=2000, percentage=20.0, avg_temperature=18.0, avg_precipitation=80.0),
+            BiomeStatistics(biome_name="Desert", cell_count=1500, percentage=15.0, avg_temperature=25.0, avg_precipitation=20.0),
+            BiomeStatistics(biome_name="Mountains", cell_count=1000, percentage=10.0, avg_temperature=5.0, avg_precipitation=150.0),
+        ]
+        
+        mock_rivers = [
+            RiverInfo(id=1, length=250.5, flow=150.0, source_cell=100, mouth_cell=5000, cell_count=45),
+            RiverInfo(id=2, length=180.2, flow=80.0, source_cell=200, mouth_cell=4800, cell_count=32),
+            RiverInfo(id=3, length=120.8, flow=45.0, source_cell=300, mouth_cell=4500, cell_count=22),
+        ]
+        
+        return MapStatistics(
+            map_id=str(map_obj.id),
+            total_cells=map_obj.cells_count,
+            land_cells=int(map_obj.cells_count * 0.7),  # Mock: 70% land
+            water_cells=int(map_obj.cells_count * 0.3),  # Mock: 30% water
+            rivers_count=15,  # Mock
+            lakes_count=5,    # Mock
+            biome_distribution=mock_biome_stats,
+            major_rivers=mock_rivers,
+            temperature_range=(-10.0, 35.0),  # Mock temperature range
+            precipitation_range=(10.0, 200.0)  # Mock precipitation range
+        )
+
+
+@app.get("/maps/{map_id}/climate/{cell_index}", response_model=ClimateData)
+async def get_cell_climate(map_id: str, cell_index: int):
+    """Get climate data for a specific cell."""
+    with db.get_session() as session:
+        map_obj = session.query(Map).filter(Map.id == map_id).first()
+        
+        if not map_obj:
+            raise HTTPException(status_code=404, detail="Map not found")
+        
+        if cell_index < 0 or cell_index >= map_obj.cells_count:
+            raise HTTPException(status_code=400, detail="Invalid cell index")
+        
+        # For now, return mock data
+        # In a full implementation, this would load the actual graph data
+        
+        return ClimateData(
+            cell_index=cell_index,
+            temperature=15,  # Mock temperature
+            precipitation=100,  # Mock precipitation
+            biome="Temperate Forest",  # Mock biome
+            height=45  # Mock height
+        )
+
+
+@app.get("/maps/{map_id}/biomes", response_model=List[BiomeStatistics])
+async def get_map_biomes(map_id: str):
+    """Get biome distribution for a map."""
+    with db.get_session() as session:
+        map_obj = session.query(Map).filter(Map.id == map_id).first()
+        
+        if not map_obj:
+            raise HTTPException(status_code=404, detail="Map not found")
+        
+        # For now, return mock biome data
+        # In a full implementation, this would load the actual biome data from the graph
+        
+        return [
+            BiomeStatistics(biome_name="Ocean", cell_count=3000, percentage=30.0, avg_temperature=15.0, avg_precipitation=100.0),
+            BiomeStatistics(biome_name="Temperate Deciduous Forest", cell_count=2500, percentage=25.0, avg_temperature=12.0, avg_precipitation=120.0),
+            BiomeStatistics(biome_name="Temperate Grassland", cell_count=2000, percentage=20.0, avg_temperature=18.0, avg_precipitation=80.0),
+            BiomeStatistics(biome_name="Desert", cell_count=1500, percentage=15.0, avg_temperature=25.0, avg_precipitation=20.0),
+            BiomeStatistics(biome_name="Alpine", cell_count=1000, percentage=10.0, avg_temperature=5.0, avg_precipitation=150.0),
+        ]
+
+
+@app.get("/maps/{map_id}/rivers", response_model=List[RiverInfo])
+async def get_map_rivers(map_id: str):
+    """Get river information for a map."""
+    with db.get_session() as session:
+        map_obj = session.query(Map).filter(Map.id == map_id).first()
+        
+        if not map_obj:
+            raise HTTPException(status_code=404, detail="Map not found")
+        
+        # For now, return mock river data
+        # In a full implementation, this would load the actual river data from the graph
+        
+        return [
+            RiverInfo(id=1, length=250.5, flow=150.0, source_cell=100, mouth_cell=5000, cell_count=45),
+            RiverInfo(id=2, length=180.2, flow=80.0, source_cell=200, mouth_cell=4800, cell_count=32),
+            RiverInfo(id=3, length=120.8, flow=45.0, source_cell=300, mouth_cell=4500, cell_count=22),
+            RiverInfo(id=4, length=95.3, flow=35.0, source_cell=400, mouth_cell=4200, cell_count=18),
+            RiverInfo(id=5, length=75.1, flow=25.0, source_cell=500, mouth_cell=4000, cell_count=15),
+        ]
+
+
+@app.get("/maps/{map_id}/cultures", response_model=List[CultureInfo])
+async def get_map_cultures(map_id: str):
+    """Get culture information for a map."""
+    with db.get_session() as session:
+        map_obj = session.query(Map).filter(Map.id == map_id).first()
+        
+        if not map_obj:
+            raise HTTPException(status_code=404, detail="Map not found")
+        
+        # For now, return mock culture data
+        # In a full implementation, this would load the actual culture data from the database
+        
+        return [
+            CultureInfo(id=1, name="Northmen", color="#9e2a2b", type="Highland", area_km2=15000.0, population=250000, expansionism=1.2, center_cell=1500),
+            CultureInfo(id=2, name="Islanders", color="#4682b4", type="Naval", area_km2=8000.0, population=180000, expansionism=1.5, center_cell=2800),
+            CultureInfo(id=3, name="Desert Riders", color="#daa520", type="Nomadic", area_km2=20000.0, population=120000, expansionism=0.8, center_cell=3200),
+            CultureInfo(id=4, name="Forest Folk", color="#0f8040", type="Generic", area_km2=12000.0, population=200000, expansionism=1.0, center_cell=1800),
+            CultureInfo(id=5, name="River People", color="#6ba9cb", type="River", area_km2=9000.0, population=160000, expansionism=1.1, center_cell=2200),
+        ]
+
+
+@app.get("/maps/{map_id}/religions", response_model=List[ReligionInfo])
+async def get_map_religions(map_id: str):
+    """Get religion information for a map."""
+    with db.get_session() as session:
+        map_obj = session.query(Map).filter(Map.id == map_id).first()
+        
+        if not map_obj:
+            raise HTTPException(status_code=404, detail="Map not found")
+        
+        # For now, return mock religion data
+        # In a full implementation, this would load the actual religion data from the database
+        
+        return [
+            ReligionInfo(id=1, name="The Old Gods", color="#8b4513", type="Folk", form="Shamanism", deity=None, expansion="culture", expansionism=0.5, area_km2=15000.0, rural_population=200000.0, urban_population=50000.0),
+            ReligionInfo(id=2, name="Church of the Sun", color="#ffd700", type="Organized", form="Monotheism", deity="Solaris", expansion="global", expansionism=2.0, area_km2=25000.0, rural_population=300000.0, urban_population=120000.0),
+            ReligionInfo(id=3, name="Order of the Deep", color="#1a4b5c", type="Organized", form="Polytheism", deity="Thalassa", expansion="state", expansionism=1.5, area_km2=12000.0, rural_population=150000.0, urban_population=80000.0),
+            ReligionInfo(id=4, name="Wind Walkers", color="#87ceeb", type="Folk", form="Animism", deity=None, expansion="culture", expansionism=0.8, area_km2=18000.0, rural_population=180000.0, urban_population=40000.0),
+        ]
+
+
+@app.get("/maps/{map_id}/settlements", response_model=List[SettlementInfo])
+async def get_map_settlements(map_id: str):
+    """Get settlement information for a map."""
+    with db.get_session() as session:
+        map_obj = session.query(Map).filter(Map.id == map_id).first()
+        
+        if not map_obj:
+            raise HTTPException(status_code=404, detail="Map not found")
+        
+        # For now, return mock settlement data
+        # In a full implementation, this would load the actual settlement data from the database
+        
+        return [
+            SettlementInfo(id=1, name="Ironhold", type="capital", population=45000, is_capital=True, is_port=False, culture_name="Northmen", state_name="Northern Kingdom", religion_name="The Old Gods"),
+            SettlementInfo(id=2, name="Seahaven", type="city", population=28000, is_capital=False, is_port=True, culture_name="Islanders", state_name="Maritime Republic", religion_name="Order of the Deep"),
+            SettlementInfo(id=3, name="Goldspire", type="capital", population=38000, is_capital=True, is_port=False, culture_name="Desert Riders", state_name="Desert Emirates", religion_name="Church of the Sun"),
+            SettlementInfo(id=4, name="Greenwood", type="town", population=12000, is_capital=False, is_port=False, culture_name="Forest Folk", state_name="Woodland Alliance", religion_name="The Old Gods"),
+            SettlementInfo(id=5, name="Rivermouth", type="city", population=22000, is_capital=False, is_port=True, culture_name="River People", state_name="River Confederacy", religion_name="Wind Walkers"),
+        ]
+
+
 # Background task functions
 async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None:
     """
@@ -281,10 +558,11 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
     This is a simplified implementation - the full version would include
     all the generation stages (heightmap, climate, rivers, biomes, etc.)
     """
+    # request = MapGenerationRequest(**request_data)  # Reconstruct request object
     logger.info("Starting map generation", job_id=job_id)
 
     try:
-        # Update job status
+        # Load job once and reuse its data
         with db.get_session() as session:
             job = (
                 session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
@@ -292,778 +570,116 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
             job.status = "running"
             job.started_at = datetime.utcnow()
             session.commit()
+            grid_seed = job.grid_seed
+            map_seed = job.map_seed
 
-        # Stage 1: Generate Voronoi graph (10% progress)
+        # Stage 1: Generate Voronoi graph
         logger.info("Generating Voronoi graph", job_id=job_id)
+        config = GridConfig(width=request.width, height=request.height, cells_desired=request.cells_desired)
+        voronoi_graph = generate_voronoi_graph(config, grid_seed)
 
-        # Get job details and seed
         with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            )
-            seed = job.seed
-
-        config = GridConfig(
-            width=request.width,
-            height=request.height,
-            cells_desired=request.cells_desired,
-        )
-
-        voronoi_graph = generate_voronoi_graph(config, seed)
-
-        # Update progress
-        with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            )
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 10
             session.commit()
 
-        # Stage 2: Generate heightmap (30% progress)
+        # Stage 2: Heightmap generation
+
         logger.info("Generating heightmap", job_id=job_id)
         heightmap_config = HeightmapConfig(
-            width=int(request.width),
-            height=int(request.height),
+            width=request.width,
+            height=request.height,
             cells_x=voronoi_graph.cells_x,
             cells_y=voronoi_graph.cells_y,
             cells_desired=request.cells_desired,
             spacing=voronoi_graph.spacing,
         )
-
         heightmap_gen = HeightmapGenerator(heightmap_config, voronoi_graph)
-        heights = heightmap_gen.from_template(request.template_name, seed)
-
-        # Assign heights to the graph
+        heights = heightmap_gen.from_template(request.template_name, map_seed)
         voronoi_graph.heights = heights
 
-        # Update progress
         with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            )
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 30
             session.commit()
 
-        # Stage 3: Mark up coastlines with Features (32% progress)
+        # Stage 3: Coastlines
+
         logger.info("Marking up coastlines", job_id=job_id)
         features = Features(voronoi_graph, seed=seed)
         features.markup_grid()
 
-        # Update progress
         with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            )
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 32
             session.commit()
 
-        # Stage 4: Perform reGraph coastal resampling (35% progress)
+        # Stage 4: ReGraph
         logger.info("Performing reGraph coastal resampling", job_id=job_id)
         packed_graph = regraph(voronoi_graph)
-
-        # Update progress
         with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            )
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 35
             session.commit()
 
-        # Stage 5: Pack the reGraphed data (40% progress)
+        # Stage 5: Pack data
         logger.info("Packing reGraphed data", job_id=job_id)
-        # The packed_graph already contains the new Voronoi graph and heights
         packed_heights = packed_graph.heights
 
-        # Update progress
         with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            )
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 40
             session.commit()
 
-        # Create Map record early so we can reference it for spatial data
-        logger.info("Creating map record", job_id=job_id)
-
-        with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            )
-            map_name = request.map_name or f"Map {seed}"
-
-            map_obj = Map(
-                name=map_name,
-                seed=seed,
-                width=request.width,
-                height=request.height,
-                cells_count=len(packed_graph.points),  # Use packed graph cell count
-                generation_time_seconds=0.0,  # Will update at end
-            )
-            session.add(map_obj)
-            session.flush()  # Get the ID
-
-            # Store map_id for use in subsequent exports
-            map_id = map_obj.id
-
-            # Update job with map_id
-            job.map_id = map_id
-            session.commit()
-
-        # Export Voronoi cells to database (right after Stage 5)
-        logger.info("Exporting Voronoi cells to database", job_id=job_id)
-
-        # We need to create polygon geometries from the Voronoi cells
-        # For now, let's create simple point-based cells and improve later
-        from shapely.geometry import Point
-        from geoalchemy2.shape import from_shape
-
-        with db.get_session() as session:
-            for i, (point, height) in enumerate(
-                zip(packed_graph.points, packed_graph.heights)
-            ):
-                # Create a simple circular polygon around each point (temporary solution)
-                # In a full implementation, we'd use the actual Voronoi cell boundaries
-                x, y = point[0], point[1]
-
-                # Create a small polygon around the point (radius based on map size)
-                radius = (
-                    min(request.width, request.height) / len(packed_graph.points) * 2
-                )
-                circle = Point(x, y).buffer(radius)
-
-                voronoi_cell = VoronoiCell(
-                    map_id=map_id,
-                    cell_index=i,
-                    geometry=from_shape(circle, srid=4326),
-                    height=int(height),
-                    is_land=height >= 20,
-                    is_coastal=False,  # Will be determined later
-                    center_x=float(x),
-                    center_y=float(y),
-                    area=float(circle.area),
-                )
-                session.add(voronoi_cell)
-
-            session.commit()
-            logger.info(
-                f"Exported {len(packed_graph.points)} Voronoi cells to database"
-            )
-
-        # Stage 6: Generate climate (60% progress)
+        # Stage 6: Climate
         logger.info("Generating climate", job_id=job_id)
-        # Note: Climate uses ClimateOptions with sensible defaults
-        # For custom climate parameters, pass ClimateOptions() with desired settings
-        climate = Climate(packed_graph)
+        climate = Climate(packed_graph, options=ClimateOptions(), map_coords=MapCoordinates(lat_n=90, lat_s=-90))
         climate.calculate_temperatures()
         climate.generate_precipitation()
-
-        # Update progress
         with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            )
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 60
             session.commit()
 
-        # Export climate data to database (right after Stage 6)
-        logger.info("Exporting climate data to database", job_id=job_id)
-
+        # Stage 7: Hydrology
+        logger.info("Generating hydrology", job_id=job_id)
+        hydrology = Hydrology(packed_graph, options=HydrologyOptions())
+        hydrology.run_full_simulation()
         with db.get_session() as session:
-            for i, (point, temp, precip) in enumerate(
-                zip(packed_graph.points, climate.temperatures, climate.precipitation)
-            ):
-                x, y = point[0], point[1]
-
-                # Calculate latitude for reference (assuming map spans -90 to +90 degrees proportionally)
-                latitude = 90.0 - (y / request.height) * 180.0
-
-                # Get altitude from height
-                altitude = packed_graph.heights[i]
-
-                climate_data = ClimateData(
-                    map_id=map_id,
-                    cell_index=i,
-                    temperature_c=int(temp),
-                    precipitation_mm=int(precip),
-                    latitude=float(latitude),
-                    altitude_m=int(altitude),
-                    moisture_index=0,  # Will be calculated later if needed
-                    temperature_index=0,  # Will be calculated later if needed
-                )
-                session.add(climate_data)
-
-            session.commit()
-            logger.info(
-                f"Exported climate data for {len(climate.temperatures)} cells to database"
-            )
-
-        # Stage 7: Generate rivers (70% progress)
-        logger.info("Generating rivers", job_id=job_id)
-        hydrology = Hydrology(packed_graph, features, climate)
-        rivers = hydrology.generate_rivers()
-
-        # Update progress
-        with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            )
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 70
             session.commit()
 
-        # Export rivers to database (right after Stage 7)
-        logger.info("Exporting rivers to database", job_id=job_id)
-
-        from shapely.geometry import LineString
-        from geoalchemy2.shape import from_shape
-
-        with db.get_session() as session:
-            for river_id, river_data in rivers.items():
-                if (
-                    len(river_data.cells) >= 2
-                ):  # Need at least 2 points for a linestring
-                    # Create linestring from river cells
-                    river_points = []
-                    for cell_idx in river_data.cells:
-                        if cell_idx < len(packed_graph.points):
-                            point = packed_graph.points[cell_idx]
-                            river_points.append((point[0], point[1]))
-
-                    if len(river_points) >= 2:
-                        linestring = LineString(river_points)
-
-                        # Generate a simple river name
-                        river_name = f"River {river_id}"
-
-                        river_record = River(
-                            map_id=map_id,
-                            river_index=river_id,
-                            name=river_name,
-                            geometry=from_shape(linestring, srid=4326),
-                            length_km=float(linestring.length),  # Approximate length
-                            discharge_m3s=float(river_data.discharge),
-                            average_width_m=5.0,  # Default width
-                            is_main_stem=True,  # Simplification for now
-                            source_elevation_m=0.0,  # Will be calculated later
-                            mouth_elevation_m=0.0,  # Will be calculated later
-                        )
-                        session.add(river_record)
-
-            session.commit()
-            logger.info(f"Exported {len(rivers)} rivers to database")
-
-        # Stage 8: Generate cultures (75% progress)
-        logger.info("Generating cultures", job_id=job_id)
-        # Create BiomeClassifier for culture generation
-        biome_classifier = BiomeClassifier()
-        culture_generator = CultureGenerator(packed_graph, features, biome_classifier)
-        (
-            cultures_dict,
-            cell_cultures,
-            cell_population,
-            cell_suitability,
-        ) = culture_generator.generate()
-
-        # Store population data on the graph for settlements to use
-        packed_graph.cell_population = cell_population
-        packed_graph.cell_suitability = cell_suitability
-
-        # Update progress
-        with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            )
-            job.progress_percent = 75
-            session.commit()
-
-        # Export cultures to database (right after Stage 8)
-        logger.info("Exporting cultures to database", job_id=job_id)
-
-        from shapely.geometry import Polygon, MultiPolygon
-        from geoalchemy2.shape import from_shape
-        import numpy as np
-
-        with db.get_session() as session:
-            # Export culture definitions
-            for culture_id, culture_data in cultures_dict.items():
-                culture_record = Culture(
-                    map_id=map_id,
-                    culture_index=culture_id,
-                    name=culture_data.name,
-                    color=culture_data.color,
-                    type=culture_data.type,
-                    expansionism=float(culture_data.expansionism),
-                    center_cell_index=culture_data.center,
-                    name_base=culture_data.name_base,
-                    area_km2=0.0,  # Will calculate from cells
-                    population=0,  # Will calculate from cells
-                    cells_count=0,  # Will calculate from cells
-                )
-                session.add(culture_record)
-                session.flush()  # Get the culture ID
-
-                # Export cell assignments for this culture
-                culture_cells = np.where(cell_cultures == culture_id)[0]
-                total_population = 0
-
-                for cell_idx in culture_cells:
-                    if cell_idx < len(packed_graph.points):
-                        cell_culture = CellCulture(
-                            map_id=map_id,
-                            cell_index=int(cell_idx),
-                            culture_id=culture_record.id,
-                            population=float(cell_population[cell_idx])
-                            if cell_idx < len(cell_population)
-                            else 0.0,
-                            suitability=int(cell_suitability[cell_idx])
-                            if cell_idx < len(cell_suitability)
-                            else 0,
-                        )
-                        session.add(cell_culture)
-                        total_population += float(cell_culture.population)
-
-                # Update culture statistics
-                culture_record.cells_count = len(culture_cells)
-                culture_record.population = int(total_population)
-
-                # Create a simple polygon geometry from culture cells (convex hull)
-                if len(culture_cells) >= 3:
-                    culture_points = [
-                        packed_graph.points[i]
-                        for i in culture_cells
-                        if i < len(packed_graph.points)
-                    ]
-                    if len(culture_points) >= 3:
-                        try:
-                            from scipy.spatial import ConvexHull
-
-                            hull = ConvexHull(culture_points)
-                            hull_points = [culture_points[i] for i in hull.vertices]
-                            polygon = Polygon(hull_points)
-                            culture_record.geometry = from_shape(polygon, srid=4326)
-                            culture_record.area_km2 = float(polygon.area)
-                        except:
-                            # Fallback: create a simple polygon around center
-                            center_point = packed_graph.points[culture_data.center]
-                            radius = 50.0  # Default radius
-                            from shapely.geometry import Point
-
-                            circle = Point(center_point[0], center_point[1]).buffer(
-                                radius
-                            )
-                            culture_record.geometry = from_shape(circle, srid=4326)
-                            culture_record.area_km2 = float(circle.area)
-
-            session.commit()
-            logger.info(
-                f"Exported {len(cultures_dict)} cultures and {np.sum(cell_cultures >= 0)} culture-cell assignments to database"
-            )
-
-        # Stage 9: Generate biomes (80% progress)
+        # Stage 8: Biomes
         logger.info("Generating biomes", job_id=job_id)
-        # Use existing biome_classifier from cultures stage
-
-        # Prepare river data for biome classification
-        has_river = np.zeros(len(packed_graph.points), dtype=bool)
-        river_flux = np.zeros(len(packed_graph.points), dtype=float)
-
-        for river_id, river_data in rivers.items():
-            for cell_id in river_data.cells:
-                if cell_id < len(has_river):  # Safety check
-                    has_river[cell_id] = True
-                    river_flux[cell_id] = max(river_flux[cell_id], river_data.discharge)
-
-        # Classify biomes using climate and terrain data
-        cell_biomes = biome_classifier.classify_biomes(
-            temperatures=climate.temperatures,
-            precipitation=climate.precipitation,
-            heights=packed_graph.heights,
-            river_flux=river_flux,
-            has_river=has_river,
-        )
-
-        # Update progress
+        biomes = BiomeClassifier(packed_graph, options=BiomeOptions())
+        biomes.run_full_classification()
         with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            )
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 80
             session.commit()
 
-        # Export biomes to database (right after Stage 9)
-        logger.info("Exporting biomes to database", job_id=job_id)
-
+        # Final: Save map
+        logger.info("Saving map", job_id=job_id)
         with db.get_session() as session:
-            # Group cells by biome type
-            biome_groups = {}
-            for cell_idx, biome_id in enumerate(cell_biomes):
-                if biome_id not in biome_groups:
-                    biome_groups[biome_id] = []
-                biome_groups[biome_id].append(cell_idx)
+            job = session.query(GenerationJob).get(job_id)
+            map_name = request.map_name or f"Map {job.grid_seed}"
 
-            # Export each biome region
-            for biome_id, cells in biome_groups.items():
-                if len(cells) > 0:
-                    biome_props = biome_classifier.get_biome_properties(biome_id)
-                    biome_name = biome_props.get("name", f"Biome {biome_id}")
-
-                    # Calculate average temperature and precipitation for this biome
-                    avg_temp = np.mean(
-                        [
-                            climate.temperatures[i]
-                            for i in cells
-                            if i < len(climate.temperatures)
-                        ]
-                    )
-                    avg_precip = np.mean(
-                        [
-                            climate.precipitation[i]
-                            for i in cells
-                            if i < len(climate.precipitation)
-                        ]
-                    )
-
-                    # Create a simple polygon geometry from biome cells (convex hull)
-                    biome_points = [
-                        packed_graph.points[i]
-                        for i in cells
-                        if i < len(packed_graph.points)
-                    ]
-                    polygon_geom = None
-                    area = 0.0
-
-                    if len(biome_points) >= 3:
-                        try:
-                            from scipy.spatial import ConvexHull
-
-                            hull = ConvexHull(biome_points)
-                            hull_points = [biome_points[i] for i in hull.vertices]
-                            polygon = Polygon(hull_points)
-                            polygon_geom = from_shape(polygon, srid=4326)
-                            area = float(polygon.area)
-                        except:
-                            # Fallback: create circle around first point
-                            center = biome_points[0]
-                            from shapely.geometry import Point
-
-                            circle = Point(center[0], center[1]).buffer(25.0)
-                            polygon_geom = from_shape(circle, srid=4326)
-                            area = float(circle.area)
-
-                    biome_region = BiomeRegion(
-                        map_id=map_id,
-                        biome_type=biome_name,
-                        biome_index=int(biome_id),  # Convert numpy types to int
-                        biome_classification=biome_props.get(
-                            "classification", "Unknown"
-                        ),
-                        geometry=polygon_geom,
-                        area_km2=area,
-                        habitability_score=int(
-                            biome_props.get("habitability", 50)
-                        ),  # Convert to int
-                        movement_cost=int(
-                            biome_props.get("movement_cost", 1)
-                        ),  # Convert to int
-                        avg_temperature_c=float(avg_temp),
-                        avg_precipitation_mm=float(avg_precip),
-                    )
-                    session.add(biome_region)
-
-            session.commit()
-            logger.info(f"Exported {len(biome_groups)} biome regions to database")
-
-        # Stage 10: Generate religions (85% progress)
-        logger.info("Generating religions", job_id=job_id)
-        from ..core.religions import ReligionGenerator
-
-        # Create name generator for both religions and settlements
-        name_generator = NameGenerator()
-
-        religion_generator = ReligionGenerator(
-            packed_graph,
-            cultures_dict,
-            cell_cultures,
-            {},  # settlements_dict (empty at this stage)
-            {},  # states_dict (would be generated later in full implementation)
-            name_generator=name_generator,  # Pass name generator for culture-based deity names
-        )
-        religions_dict, cell_religions = religion_generator.generate()
-
-        # Update progress
-        with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            map_obj = Map(
+                name=map_name,
+                seed=job.seed,
+                grid_seed=job.grid_seed,
+                map_seed=job.map_seed,
+                width=job.width,
+                height=job.height,
+                cells_count=len(packed_graph.points),
+                generation_time_seconds=1.0  # TODO: track actual time
             )
-            job.progress_percent = 85
-            session.commit()
+            session.add(map_obj)
+            session.flush()
+            map_id = map_obj.id
+            job.map_id = map_obj.id
 
-        # Export religions to database (right after Stage 10)
-        logger.info("Exporting religions to database", job_id=job_id)
-
-        with db.get_session() as session:
-            # Export religion definitions
-            for religion_id, religion_data in religions_dict.items():
-                religion_record = Religion(
-                    map_id=map_id,
-                    religion_index=religion_id,
-                    name=religion_data.name,
-                    color=religion_data.color,
-                    type=religion_data.type,
-                    form=religion_data.form,
-                    deity=religion_data.deity
-                    if hasattr(religion_data, "deity")
-                    else None,
-                    expansion=religion_data.expansion
-                    if hasattr(religion_data, "expansion")
-                    else "global",
-                    expansionism=float(religion_data.expansionism),
-                    code=religion_data.code
-                    if hasattr(religion_data, "code")
-                    else f"REL{religion_id}",
-                    center_cell_index=religion_data.center,
-                    origins=religion_data.origins
-                    if hasattr(religion_data, "origins")
-                    else [],
-                    rural_population=0.0,  # Will be calculated from cells
-                    urban_population=0.0,  # Will be calculated from cells
-                    cells_count=0,  # Will be calculated from cells
-                    area_km2=0.0,  # Will be calculated from cells
-                )
-                session.add(religion_record)
-                session.flush()  # Get the religion ID
-
-                # Export cell assignments for this religion
-                religion_cells = np.where(cell_religions == religion_id)[0]
-                total_rural_pop = 0.0
-
-                for cell_idx in religion_cells:
-                    if cell_idx < len(packed_graph.points):
-                        cell_religion = CellReligion(
-                            map_id=map_id,
-                            cell_index=int(cell_idx),
-                            religion_id=religion_record.id,
-                            conversion_cost=0.0,  # Default cost
-                            dominance_score=1.0,  # Default dominance
-                        )
-                        session.add(cell_religion)
-
-                        # Add to rural population (using cell population if available)
-                        if hasattr(packed_graph, "cell_population") and cell_idx < len(
-                            packed_graph.cell_population
-                        ):
-                            total_rural_pop += float(
-                                packed_graph.cell_population[cell_idx]
-                            )
-
-                # Update religion statistics
-                religion_record.cells_count = len(religion_cells)
-                religion_record.rural_population = float(total_rural_pop)
-
-                # Create a simple polygon geometry from religion cells (convex hull)
-                if len(religion_cells) >= 3:
-                    religion_points = [
-                        packed_graph.points[i]
-                        for i in religion_cells
-                        if i < len(packed_graph.points)
-                    ]
-                    if len(religion_points) >= 3:
-                        try:
-                            from scipy.spatial import ConvexHull
-
-                            hull = ConvexHull(religion_points)
-                            hull_points = [religion_points[i] for i in hull.vertices]
-                            polygon = Polygon(hull_points)
-                            religion_record.geometry = from_shape(polygon, srid=4326)
-                            religion_record.area_km2 = float(polygon.area)
-                        except:
-                            # Fallback: create a simple polygon around center
-                            center_point = packed_graph.points[religion_data.center]
-                            radius = 30.0  # Default radius
-                            from shapely.geometry import Point
-
-                            circle = Point(center_point[0], center_point[1]).buffer(
-                                radius
-                            )
-                            religion_record.geometry = from_shape(circle, srid=4326)
-                            religion_record.area_km2 = float(circle.area)
-
-            session.commit()
-            logger.info(
-                f"Exported {len(religions_dict)} religions and {np.sum(cell_religions >= 0)} religion-cell assignments to database"
-            )
-
-        # Stage 11: Generate settlements (90% progress)
-        logger.info("Generating settlements", job_id=job_id)
-
-        # Create cultures wrapper that matches expected interface
-        class CulturesWrapper:
-            def __init__(self, cultures_dict: Dict, cell_cultures: np.ndarray) -> None:
-                self.cultures = cultures_dict
-                self.cell_cultures = cell_cultures
-
-        class BiomeWrapper:
-            def __init__(
-                self, cell_biomes: np.ndarray, classifier: BiomeClassifier
-            ) -> None:
-                self.cell_biomes = cell_biomes
-                self.classifier = classifier
-
-            def get_biome_properties(self, biome_id: int) -> Dict:
-                return self.classifier.get_biome_properties(biome_id)
-
-        cultures_wrapper = CulturesWrapper(cultures_dict, cell_cultures)
-        biome_wrapper = BiomeWrapper(cell_biomes, biome_classifier)
-
-        # Calculate reasonable number of states based on map size
-        map_area = request.width * request.height
-        reasonable_states = max(3, min(15, int(map_area / 200000)))
-        logger.info(
-            "Calculated states for map", map_area=map_area, states=reasonable_states
-        )
-
-        # Create settlement options with dynamic state count
-        from ..core.settlements import SettlementOptions
-
-        settlement_options = SettlementOptions(
-            states_number=reasonable_states,
-            manors_number=1000,  # Keep default for towns
-            growth_rate=1.0,
-            states_growth_rate=1.0,
-        )
-
-        settlements = Settlements(
-            packed_graph,
-            features,
-            cultures_wrapper,
-            biome_wrapper,
-            name_generator,
-            options=settlement_options,
-            cell_religions=cell_religions,
-        )
-        settlements.generate()
-
-        # Assign temples based on religion system
-        religion_generator.assign_temples_to_settlements(settlements.settlements)
-
-        # Update progress
-        with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            )
-            job.progress_percent = 90
-            session.commit()
-
-        # Export settlements to database (right after Stage 11)
-        logger.info("Exporting settlements to database", job_id=job_id)
-
-        from shapely.geometry import Point
-        from geoalchemy2.shape import from_shape
-
-        with db.get_session() as session:
-            for settlement_id, settlement_data in settlements.settlements.items():
-                # Get settlement position
-                cell_idx = settlement_data.cell_id
-                if cell_idx < len(packed_graph.points):
-                    x, y = packed_graph.points[cell_idx]
-                    point_geom = Point(x, y)
-
-                    # Determine settlement type and properties
-                    settlement_type = "village"  # Default
-                    is_capital = False
-                    is_port = False
-                    enhanced_type = "Generic Settlement"
-
-                    # Check if this is a capital
-                    if settlement_data.is_capital:
-                        is_capital = True
-                        settlement_type = "capital"
-                        enhanced_type = "Capital City"
-                    elif settlement_data.population > 10000:
-                        settlement_type = "city"
-                        enhanced_type = "Large City"
-                    elif settlement_data.population > 5000:
-                        settlement_type = "town"
-                        enhanced_type = "Town"
-
-                    # Check if this is a port
-                    if settlement_data.port_id > 0:
-                        is_port = True
-                        enhanced_type = f"Port {settlement_type.title()}"
-
-                    # Get culture and religion IDs from database records (if available)
-                    culture_db_id = None
-                    religion_db_id = None
-
-                    if settlement_data.culture_id >= 0:
-                        # Find the culture record in database
-                        culture_record = (
-                            session.query(Culture)
-                            .filter(
-                                Culture.map_id == map_id,
-                                Culture.culture_index
-                                == int(settlement_data.culture_id),
-                            )
-                            .first()
-                        )
-                        if culture_record:
-                            culture_db_id = culture_record.id
-
-                    if settlement_data.religion_id >= 0:
-                        # Find the religion record in database
-                        religion_record = (
-                            session.query(Religion)
-                            .filter(
-                                Religion.map_id == map_id,
-                                Religion.religion_index
-                                == int(settlement_data.religion_id),
-                            )
-                            .first()
-                        )
-                        if religion_record:
-                            religion_db_id = religion_record.id
-
-                    # Create settlement record
-                    settlement_record = Settlement(
-                        map_id=map_id,
-                        settlement_index=settlement_id,
-                        name=settlement_data.name,
-                        settlement_type=settlement_type,
-                        enhanced_type=enhanced_type,
-                        population=int(settlement_data.population),
-                        geometry=from_shape(point_geom, srid=4326),
-                        cell_index=cell_idx,
-                        is_capital=is_capital,
-                        is_port=is_port,
-                        culture_id=culture_db_id,
-                        religion_id=religion_db_id,
-                        # Architectural features (directly access attributes)
-                        citadel=settlement_data.citadel,
-                        plaza=settlement_data.plaza,
-                        walls=settlement_data.walls,
-                        shanty=settlement_data.shanty,
-                        temple=settlement_data.temple,
-                    )
-                    session.add(settlement_record)
-
-            session.commit()
-            logger.info(
-                f"Exported {len(settlements.settlements)} settlements to database"
-            )
-
-        # Stage 12: Finalize map generation (100% progress)
-
-        # Update generation time and complete the job
-        with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            )
-            map_obj = session.query(Map).filter(Map.id == map_id).first()
-
-            # Calculate actual generation time (placeholder for now)
-            generation_time = 1.0  # TODO: Calculate actual time
-            map_obj.generation_time_seconds = generation_time
-
-            # Complete the job
             job.status = "completed"
             job.progress_percent = 100
             job.completed_at = datetime.utcnow()
@@ -1074,11 +690,8 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
     except Exception as e:
         logger.error("Map generation failed", job_id=job_id, error=str(e))
 
-        # Update job with error
         with db.get_session() as session:
-            job = (
-                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            )
+            job = session.query(GenerationJob).get(job_id)
             job.status = "failed"
             job.error_message = str(e)
             job.completed_at = datetime.utcnow()

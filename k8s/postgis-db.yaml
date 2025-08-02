@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgis-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+type: Opaque
+stringData:
+  name: py-fmg
+  user: user
+  password: password
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: py-fmg-db
+spec:
+  selector:
+    matchLabels:
+      app: py-fmg-db
+  template:
+    metadata:
+      labels:
+        app: py-fmg-db
+    spec:
+      containers:
+        - name: postgis
+          image: postgis/postgis:14-3.3
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: name
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: password
+          volumeMounts:
+            - mountPath: /var/lib/postgresql/data
+              name: db-storage
+      volumes:
+        - name: db-storage
+          persistentVolumeClaim:
+            claimName: postgis-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: py-fmg-db
+spec:
+  selector:
+    app: py-fmg-db
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP

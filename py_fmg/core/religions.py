@@ -13,11 +13,16 @@ from __future__ import annotations
 import colorsys
 import heapq
 import math
+
 from dataclasses import dataclass, field
+
 from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import structlog
+
+from pydantic import BaseModel, Field, ConfigDict
+
 
 from .alea_prng import AleaPRNG
 from .name_generator import NameGenerator
@@ -25,37 +30,39 @@ from .name_generator import NameGenerator
 logger = structlog.get_logger()
 
 
-@dataclass
-class ReligionOptions:
+
+class ReligionOptions(BaseModel):
     """Religion generation options matching FMG's parameters."""
-    religions_number: int = 8  # Target organized religions
-    theocracy_chance: float = 0.1  # Chance state becomes theocracy
-    temple_pop_threshold: int = 50  # Guaranteed temple population
-    sacred_site_density: float = 1.0  # Sacred site generation multiplier
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    religions_number: int = Field(default=8, description="Target organized religions")
+    theocracy_chance: float = Field(default=0.1, description="Chance state becomes theocracy")
+    temple_pop_threshold: int = Field(default=50, description="Guaranteed temple population")
+    sacred_site_density: float = Field(default=1.0, description="Sacred site generation multiplier")
 
 
-@dataclass
-class Religion:
+class Religion(BaseModel):
     """Data structure for a religion matching FMG specification."""
-    id: int
-    name: str
-    color: str
-    type: str  # "Folk", "Organized", "Cult", "Heresy"
-    form: str  # Specific religious form
-    culture_id: int
-    center: int  # Cell ID of religion center
-    deity: Optional[str] = None  # Supreme deity name
-    expansion: str = "global"  # "global", "state", "culture"
-    expansionism: float = 1.0  # 0-10, expansion competitiveness
-    origins: List[int] = field(default_factory=list)  # Parent religion IDs
-    code: str = ""  # Abbreviated code
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    id: int = Field(description="Unique religion identifier")
+    name: str = Field(description="Religion name")
+    color: str = Field(description="Religion color in hex format")
+    type: str = Field(description="Religion type: Folk, Organized, Cult, Heresy")
+    form: str = Field(description="Specific religious form")
+    culture_id: int = Field(description="Associated culture ID")
+    center: int = Field(description="Cell ID of religion center")
+    deity: Optional[str] = Field(default=None, description="Supreme deity name")
+    expansion: str = Field(default="global", description="Expansion type: global, state, culture")
+    expansionism: float = Field(default=1.0, description="Expansion competitiveness (0-10)")
+    origins: List[int] = Field(default_factory=list, description="Parent religion IDs")
+    code: str = Field(default="", description="Abbreviated code")
 
     # Statistics (calculated)
-    cells: Set[int] = field(default_factory=set)
-    area: float = 0.0
-    rural_population: float = 0.0
-    urban_population: float = 0.0
-
+    cells: Set[int] = Field(default_factory=set, description="Cells following this religion")
+    area: float = Field(default=0.0, description="Total area covered")
+    rural_population: float = Field(default=0.0, description="Rural population following")
+    urban_population: float = Field(default=0.0, description="Urban population following")
 
 class ReligionGenerator:
     """Generates religions following FMG's algorithm."""

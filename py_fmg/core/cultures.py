@@ -8,11 +8,16 @@ expansion patterns, and geographical preferences matching the original FMG.
 from __future__ import annotations
 
 import math
+
 from dataclasses import dataclass, field
+
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import structlog
+
+from pydantic import BaseModel, Field, ConfigDict
+
 
 from .alea_prng import AleaPRNG
 from .biomes import BiomeClassifier
@@ -20,36 +25,38 @@ from .biomes import BiomeClassifier
 logger = structlog.get_logger()
 
 
-@dataclass
-class CultureOptions:
+class CultureOptions(BaseModel):
     """Culture generation options matching FMG's parameters."""
-    cultures_number: int = 12  # Target number of cultures
-    min_culture_cells: int = 10  # Minimum cells for valid culture
-    expansionism_modifier: float = 1.0  # Global expansionism multiplier
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    cultures_number: int = Field(default=12, description="Target number of cultures")
+    min_culture_cells: int = Field(default=10, description="Minimum cells for valid culture")
+    expansionism_modifier: float = Field(default=1.0, description="Global expansionism multiplier")
+    
     # Culture type distribution weights
-    generic_weight: float = 10.0
-    naval_weight: float = 2.0
-    nomadic_weight: float = 1.0
-    hunting_weight: float = 1.0
-    highland_weight: float = 1.0
-    lake_weight: float = 0.5
-    river_weight: float = 1.0
+    generic_weight: float = Field(default=10.0, description="Weight for generic cultures")
+    naval_weight: float = Field(default=2.0, description="Weight for naval cultures")
+    nomadic_weight: float = Field(default=1.0, description="Weight for nomadic cultures")
+    hunting_weight: float = Field(default=1.0, description="Weight for hunting cultures")
+    highland_weight: float = Field(default=1.0, description="Weight for highland cultures")
+    lake_weight: float = Field(default=0.5, description="Weight for lake cultures")
+    river_weight: float = Field(default=1.0, description="Weight for river cultures")
 
 
-@dataclass
-class Culture:
+class Culture(BaseModel):
     """Data structure for a cultural group."""
-    id: int
-    name: str
-    color: str
-    center: int  # Cell ID of culture center
-    type: str = "Generic"  # Generic, Naval, Nomadic, Hunting, Highland, Lake, River
-    expansionism: float = 1.0
-    cells: Set[int] = field(default_factory=set)
-    removed: bool = False
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    id: int = Field(description="Unique culture identifier")
+    name: str = Field(description="Culture name")
+    color: str = Field(description="Culture color in hex format")
+    center: int = Field(description="Cell ID of culture center")
+    type: str = Field(default="Generic", description="Culture type")
+    expansionism: float = Field(default=1.0, description="Expansion tendency")
+    cells: Set[int] = Field(default_factory=set, description="Cells belonging to this culture")
+    removed: bool = Field(default=False, description="Whether culture has been removed")
+    name_base: int = Field(default=0, description="Index into name bases")
 
-    # Name base assignment
-    name_base: int = 0  # Index into name bases
 
 
 class CultureGenerator:

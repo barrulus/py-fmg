@@ -45,6 +45,10 @@ class Map(Base):
     settlements = relationship("Settlement", back_populates="map", cascade="all, delete-orphan")
     rivers = relationship("River", back_populates="map", cascade="all, delete-orphan")
     biomes = relationship("BiomeRegion", back_populates="map", cascade="all, delete-orphan")
+
+    cultures = relationship("Culture", back_populates="map", cascade="all, delete-orphan")
+    religions = relationship("Religion", back_populates="map", cascade="all, delete-orphan")
+
     climate_data = relationship("ClimateData", back_populates="map", cascade="all, delete-orphan")
     cell_cultures = relationship("CellCulture", back_populates="map", cascade="all, delete-orphan")
     cell_religions = relationship("CellReligion", back_populates="map", cascade="all, delete-orphan")
@@ -143,10 +147,14 @@ class State(Base):
     
     name = Column(String(255), nullable=False)
     color = Column(String(7))  # Hex color code
+
+    culture_name = Column(String(100))
+
     culture_id = Column(UUID(as_uuid=True), ForeignKey("cultures.id"), nullable=True)
     religion_id = Column(UUID(as_uuid=True), ForeignKey("religions.id"), nullable=True)
     
     # Government and state properties
+
     government_type = Column(String(100))
     state_type = Column(String(100))  # Enhanced type including theocracies
     expansionism = Column(Float, default=1.0)
@@ -168,6 +176,7 @@ class State(Base):
     # Relationships
     map = relationship("Map", back_populates="states")
     culture = relationship("Culture", back_populates="states")
+
     state_religion = relationship("Religion", back_populates="theocratic_states")
     settlements = relationship("Settlement", back_populates="state")
 
@@ -196,6 +205,11 @@ class Settlement(Base):
     # Basic properties
     is_capital = Column(Boolean, default=False)
     is_port = Column(Boolean, default=False)
+
+    culture_name = Column(String(100))
+    culture_id = Column(UUID(as_uuid=True), ForeignKey("cultures.id"), nullable=True)
+    religion_id = Column(UUID(as_uuid=True), ForeignKey("religions.id"), nullable=True)
+
     
     # Enhanced port data
     port_feature_id = Column(Integer)  # Reference to water feature
@@ -282,6 +296,77 @@ class BiomeRegion(Base):
     # Relationships
     map = relationship("Map", back_populates="biomes")
 
+
+
+class Culture(Base):
+    """Cultural groups and regions."""
+    
+    __tablename__ = "cultures"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    map_id = Column(UUID(as_uuid=True), ForeignKey("maps.id"), nullable=False)
+    culture_index = Column(Integer, nullable=False)  # Original FMG culture ID
+    
+    name = Column(String(255), nullable=False)
+    color = Column(String(7))  # Hex color code
+    type = Column(String(50))  # Generic, Naval, Nomadic, Hunting, Highland, Lake, River
+    
+    # Territory as polygon
+    geometry = Column(Geometry("MULTIPOLYGON", srid=4326))
+    
+    # Properties
+    area_km2 = Column(Float)
+    population = Column(Integer)
+    expansionism = Column(Float, default=1.0)
+    name_base = Column(Integer, default=0)  # Index into name bases
+    
+    # Center point
+    center_geometry = Column(Geometry("POINT", srid=4326))
+    center_cell_index = Column(Integer)
+    
+    # Relationships
+    map = relationship("Map", back_populates="cultures")
+    settlements = relationship("Settlement", back_populates="culture")
+    states = relationship("State", back_populates="culture")
+
+
+class Religion(Base):
+    """Religious systems and beliefs."""
+    
+    __tablename__ = "religions"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    map_id = Column(UUID(as_uuid=True), ForeignKey("maps.id"), nullable=False)
+    religion_index = Column(Integer, nullable=False)  # Original FMG religion ID
+    
+    name = Column(String(255), nullable=False)
+    color = Column(String(7))  # Hex color code
+    type = Column(String(50))  # Folk, Organized, Cult, Heresy
+    form = Column(String(100))  # Specific religious form
+    
+    # Associated culture and center
+    culture_id = Column(UUID(as_uuid=True), ForeignKey("cultures.id"), nullable=True)
+    center_geometry = Column(Geometry("POINT", srid=4326))
+    center_cell_index = Column(Integer)
+    
+    # Properties
+    deity = Column(String(255))  # Supreme deity name
+    expansion = Column(String(20), default="global")  # global, state, culture
+    expansionism = Column(Float, default=1.0)  # 0-10, expansion competitiveness
+    code = Column(String(10))  # Abbreviated code
+    
+    # Territory as polygon
+    geometry = Column(Geometry("MULTIPOLYGON", srid=4326))
+    
+    # Statistics
+    area_km2 = Column(Float)
+    rural_population = Column(Float)
+    urban_population = Column(Float)
+    
+    # Relationships
+    map = relationship("Map", back_populates="religions")
+    culture = relationship("Culture")
+    settlements = relationship("Settlement", back_populates="religion")
 
 class VoronoiCell(Base):
     """Voronoi cell geometries with heightmap data."""
@@ -393,6 +478,7 @@ class ReligionCulture(Base):
     # Relationships
     religion = relationship("Religion", back_populates="culture_relationships")
     culture = relationship("Culture", back_populates="religion_relationships")
+
 
 
 class GenerationJob(Base):

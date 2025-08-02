@@ -14,11 +14,15 @@ Process:
 """
 
 import heapq
+
 from dataclasses import dataclass, field
+
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import structlog
+
+from pydantic import BaseModel, Field, ConfigDict
 from sklearn.neighbors import KDTree
 
 from .name_generator import NameGenerator
@@ -26,72 +30,74 @@ from .name_generator import NameGenerator
 logger = structlog.get_logger()
 
 
-@dataclass
-class SettlementOptions:
+
+class SettlementOptions(BaseModel):
     """Settlement generation options matching FMG's parameters."""
-    states_number: int = 30  # Target number of states
-    manors_number: int = 1000  # Target number of towns (1000 = auto)
-    growth_rate: float = 1.0  # Global growth rate multiplier
-    states_growth_rate: float = 1.0  # States-specific growth multiplier
-    size_variety: float = 3.0  # Variation in state expansionism
-    min_state_cells: int = 10  # Minimum cells for valid state
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    states_number: int = Field(default=30, description="Target number of states")
+    manors_number: int = Field(default=1000, description="Target number of towns (1000 = auto)")
+    growth_rate: float = Field(default=1.0, description="Global growth rate multiplier")
+    states_growth_rate: float = Field(default=1.0, description="States-specific growth multiplier")
+    size_variety: float = Field(default=3.0, description="Variation in state expansionism")
+    min_state_cells: int = Field(default=10, description="Minimum cells for valid state")
 
     # Spacing parameters
-    capital_spacing_divisor: int = 2  # Divide map size by state count * this
-    town_spacing_base: int = 150  # Base divisor for town spacing
-    town_spacing_power: float = 0.7  # Power adjustment for town count
+    capital_spacing_divisor: int = Field(default=2, description="Divide map size by state count * this")
+    town_spacing_base: int = Field(default=150, description="Base divisor for town spacing")
+    town_spacing_power: float = Field(default=0.7, description="Power adjustment for town count")
 
     # Cost parameters
-    culture_same_bonus: int = -9  # Bonus for expanding into same culture
-    culture_foreign_penalty: int = 100  # Penalty for expanding into foreign culture
-    sea_crossing_penalty: int = 1000  # General sea crossing penalty
-    nomadic_sea_penalty: int = 10000  # Extreme penalty for nomadic sea crossing
+    culture_same_bonus: int = Field(default=-9, description="Bonus for expanding into same culture")
+    culture_foreign_penalty: int = Field(default=100, description="Penalty for expanding into foreign culture")
+    sea_crossing_penalty: int = Field(default=1000, description="General sea crossing penalty")
+    nomadic_sea_penalty: int = Field(default=10000, description="Extreme penalty for nomadic sea crossing")
 
     # Population parameters
-    urbanization_rate: float = 0.1  # Target ~10% urbanization
-    capital_pop_multiplier: float = 1.3  # Capital population boost
-    port_pop_multiplier: float = 1.3  # Port population boost
+    urbanization_rate: float = Field(default=0.1, description="Target ~10% urbanization")
+    capital_pop_multiplier: float = Field(default=1.3, description="Capital population boost")
+    port_pop_multiplier: float = Field(default=1.3, description="Port population boost")
 
 
-@dataclass
-class Settlement:
+class Settlement(BaseModel):
     """Data structure for a settlement (burg)."""
-    id: int
-    cell_id: int
-    x: float
-    y: float
-    name: str = ""
-    population: float = 0.0
-    is_capital: bool = False
-    state_id: int = 0
-    culture_id: int = 0
-    port_id: int = 0  # Feature ID if port, 0 otherwise
-    religion_id: int = 0  # Religion ID if assigned
-    type: str = "Generic"
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    id: int = Field(description="Unique settlement identifier")
+    cell_id: int = Field(description="Cell ID where settlement is located")
+    x: float = Field(description="X coordinate")
+    y: float = Field(description="Y coordinate")
+    name: str = Field(default="", description="Settlement name")
+    population: float = Field(default=0.0, description="Settlement population")
+    is_capital: bool = Field(default=False, description="Whether this is a capital city")
+    state_id: int = Field(default=0, description="State ID this settlement belongs to")
+    culture_id: int = Field(default=0, description="Culture ID of this settlement")
+    port_id: int = Field(default=0, description="Feature ID if port, 0 otherwise")
+    religion_id: int = Field(default=0, description="Religion ID if assigned")
+    type: str = Field(default="Generic", description="Settlement type")
 
     # Features
-    citadel: bool = False
-    plaza: bool = False
-    walls: bool = False
-    shanty: bool = False
-    temple: bool = False
+    citadel: bool = Field(default=False, description="Has citadel")
+    plaza: bool = Field(default=False, description="Has plaza")
+    walls: bool = Field(default=False, description="Has walls")
+    shanty: bool = Field(default=False, description="Has shanty town")
+    temple: bool = Field(default=False, description="Has temple")
 
-
-@dataclass
-class State:
+class State(BaseModel):
     """Data structure for a political state."""
-    id: int
-    name: str
-    capital_id: int
-    culture_id: int
-    expansionism: float = 1.0
-    color: str = "#000000"
-    type: str = "Generic"  # Cultural type affecting expansion
-    center_cell: int = 0
-    territory_cells: List[int] = field(default_factory=list)
-    removed: bool = False
-    locked: bool = False
-
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    id: int = Field(description="Unique state identifier")
+    name: str = Field(description="State name")
+    capital_id: int = Field(description="ID of capital settlement")
+    culture_id: int = Field(description="Dominant culture ID")
+    expansionism: float = Field(default=1.0, description="Expansion tendency")
+    color: str = Field(default="#000000", description="State color in hex format")
+    type: str = Field(default="Generic", description="Cultural type affecting expansion")
+    center_cell: int = Field(default=0, description="Center cell ID")
+    territory_cells: List[int] = Field(default_factory=list, description="Cells controlled by this state")
+    removed: bool = Field(default=False, description="Whether state has been removed")
+    locked: bool = Field(default=False, description="Whether state expansion is locked")
 
 class Settlements:
     """Handles settlement placement and state generation."""

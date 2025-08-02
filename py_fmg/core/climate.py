@@ -254,8 +254,9 @@ class Climate:
             if is_west:
                 westerly.append((c, lat_mod, wind_tier))
             if is_east:
-                east_idx = min(c + cells_x - 1, n_cells - 1)  # Bound check
-                easterly.append((east_idx, lat_mod, wind_tier))
+                east_index = min(c + cells_x - 1, n_cells - 1)
+                easterly.append((east_index, lat_mod, wind_tier))
+
             if is_north:
                 northerly += 1
             if is_south:

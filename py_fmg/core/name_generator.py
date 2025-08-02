@@ -1,4 +1,6 @@
-"""Name generation system using Markov chains.
+
+"""
+Name generation system using Markov chains.
 
 This module ports the procedural name generation from FMG to Python,
 using a custom Markov chain implementation that matches FMG's approach.
@@ -7,9 +9,17 @@ using a custom Markov chain implementation that matches FMG's approach.
 from __future__ import annotations
 
 import json
+
+from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple
+
+from pydantic import BaseModel, Field, ConfigDict
+
+
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
+
 
 from py_fmg.core.alea_prng import AleaPRNG
 from py_fmg.core.markov_name_generator import MarkovChain, MarkovNameGenerator
@@ -27,22 +37,23 @@ class EntityType(Enum):
     MAP_TITLE = "map_title"
 
 
-@dataclass
-class NameBase:
+
+class NameBase(BaseModel):
     """Configuration for a cultural naming pattern."""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     
-    name: str
-    i: int  # Index
-    min: int  # Minimum name length
-    max: int  # Maximum name length
-    d: str  # Allowed duplicate letters
-    m: float  # Multi-word name rate (deprecated in FMG)
-    b: str  # Base names (comma-separated)
+    name: str = Field(description="Name of the name base")
+    i: int = Field(description="Index identifier")
+    min: int = Field(description="Minimum name length")
+    max: int = Field(description="Maximum name length")
+    d: str = Field(description="Allowed duplicate letters")
+    m: float = Field(description="Multi-word name rate (deprecated in FMG)")
+    b: str = Field(description="Base names (comma-separated)")
+
     
     def get_names_list(self) -> List[str]:
         """Extract names as a list."""
         return [name.strip() for name in self.b.split(",") if name.strip()]
-
 
 class NameGenerator:
     """Main name generator using Markov chains."""

@@ -1,0 +1,95 @@
+version: "3.9"
+
+services:
+  db-master:
+    image: postgis/postgis:14-3.3
+    container_name: db-master
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata_master:/var/lib/postgresql/data
+    networks:
+      - db-net
+
+  db-replica:
+    image: postgis/postgis:14-3.3
+    container_name: db-replica
+    restart: always
+    depends_on:
+      - db-master
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      # You would configure recovery.conf or streaming replication here in a custom Dockerfile
+    volumes:
+      - pgdata_replica:/var/lib/postgresql/data
+    networks:
+      - db-net
+
+  pgpool:
+    image: bitnami/pgpool:4
+    container_name: pgpool
+    restart: always
+    depends_on:
+      - db-master
+      - db-replica
+    ports:
+      - "5433:5432"
+    environment:
+      PGPOOL_BACKEND_NODES: "0:db-master:5432,1:db-replica:5432"
+      PGPOOL_SR_CHECK_USER: ${DB_USER}
+      PGPOOL_SR_CHECK_PASSWORD: ${DB_PASSWORD}
+      PGPOOL_ENABLE_LOAD_BALANCING: "yes"
+      PGPOOL_POSTGRES_USERNAME: ${DB_USER}
+      PGPOOL_POSTGRES_PASSWORD: ${DB_PASSWORD}
+      PGPOOL_ADMIN_USERNAME: admin
+      PGPOOL_ADMIN_PASSWORD: admin
+    networks:
+      - db-net
+
+  web:
+    build: .
+    restart: always
+    depends_on:
+      - pgpool
+    environment:
+      - DB_HOST=pgpool
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+    expose:
+      - 8000
+    volumes:
+      - .:/app
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+    networks:
+      - db-net
+      - web-net
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-proxy
+    ports:
+      - "80:80"
+    depends_on:
+      - web
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - web-net
+
+volumes:
+  pgdata_master:
+  pgdata_replica:
+
+networks:
+  db-net:
+  web-net:
