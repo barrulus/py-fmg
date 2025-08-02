@@ -15,7 +15,13 @@ import math
 from typing import Dict, List, Tuple, Optional, Set
 from dataclasses import dataclass, field
 from collections import deque
-
+from .voronoi_graph import (
+    VoronoiGraph,
+    build_cell_connectivity,
+    build_cell_vertices,
+    build_vertex_connectivity,
+)
+from .climate import Climate
 
 logger = structlog.get_logger()
 
@@ -87,15 +93,18 @@ class RiverData:
 class Hydrology:
     """Handles water flow simulation and river generation."""
 
-    def __init__(self, graph, options: Optional[HydrologyOptions] = None):
+    def __init__(self, graph:VoronoiGraph, features=None, options: Optional[HydrologyOptions] = None):
         """
         Initialize hydrology system.
 
         Args:
             graph: VoronoiGraph with heights and precipitation populated
+            features: Optional Features object for advanced lake handling
             options: Hydrology calculation options
         """
+
         self.graph = graph
+        self.features = features  # Optional features for lake handling
         self.options = options or HydrologyOptions()
 
         # Water flow arrays
@@ -106,6 +115,7 @@ class Hydrology:
         # Generated features
         self.rivers = []  # List of River objects
         self.lakes = []  # List of Lake objects
+        self.climate = Climate(graph)
 
     def fill_depressions(self):
         """
@@ -581,26 +591,11 @@ class Hydrology:
         check_lake_max_iteration = int(max_iterations * 0.85)
         elevate_lake_max_iteration = int(max_iterations * 0.75)
 
-        # Helper function to get height of lake or cell (matches FMG's height function)
+        # Helper function to get height of lake or cell (simplified version)
         def height(i: int) -> float:
-            if (
-                hasattr(self.graph, "feature_ids")
-                and self.graph.feature_ids is not None
-                and i < len(self.graph.feature_ids)
-            ):
-                feature_id = self.graph.feature_ids[i]
-                if feature_id > 0 and hasattr(self.graph, "features") and feature_id in self.graph.features:
-                    feature = self.graph.features[feature_id]
-                    if (
-                        feature
-                        and hasattr(feature, "id")
-                        and feature.id == feature_id
-                        ):
-                            if (
-                                hasattr(feature, "height")
-                                and feature.height is not None
-                            ):
-                                return feature.height
+            # For now, just return the basic height from the graph
+            # In the future, this could be extended to handle lake features
+            # if they are properly integrated into the graph structure
             return self.graph.heights[i]
 
         # Get lakes and land cells
@@ -608,7 +603,7 @@ class Hydrology:
         if hasattr(self.features, "features"):
             lakes = [
                 f
-                for f in self.features.features
+                for f in self.graph.features
                 if f and hasattr(f, "type") and f.type == "lake"
             ]
 
@@ -651,16 +646,16 @@ class Hydrology:
                     if hasattr(lake, "shoreline"):
                         shoreline = lake.shoreline
                     elif (
-                        hasattr(self.features, "feature_ids")
-                        and self.features.feature_ids is not None
+                        hasattr(self.graph.features, "feature_ids")
+                        and self.graph.features.feature_ids is not None
                     ):
                         # Find shoreline cells - cells adjacent to this lake
-                        for i in range(len(self.features.feature_ids)):
-                            if self.features.feature_ids[i] == lake.id:
+                        for i in range(len(self.graph.features.feature_ids)):
+                            if self.graph.features.feature_ids[i] == lake.id:
                                 for neighbor in self._get_neighbors(i):
                                     if (
-                                        neighbor < len(self.features.feature_ids)
-                                        and self.features.feature_ids[neighbor]
+                                        neighbor < len(self.graph.features.feature_ids)
+                                        and self.graph.features.feature_ids[neighbor]
                                         != lake.id
                                         and self.graph.heights[neighbor]
                                         >= self.options.sea_level
@@ -750,16 +745,16 @@ class Hydrology:
         if not hasattr(self.features, "features"):
             return False
 
-        for feature in self.features.features:
+        for feature in self.graph.features:
             if feature and feature.type == "lake":
                 # Check if cell_id is part of this lake feature
                 if (
-                    hasattr(self.features, "feature_ids")
-                    and self.features.feature_ids is not None
+                    hasattr(self.graph.features, "feature_ids")
+                    and self.graph.features.feature_ids is not None
                 ):
                     if (
                         cell_id < len(self.features.feature_ids)
-                        and self.features.feature_ids[cell_id] == feature.id
+                        and self.graph.features.feature_ids[cell_id] == feature.id
                     ):
                         return True
         return False
@@ -796,7 +791,7 @@ class Hydrology:
             return lake_out_cells
 
         # Process each lake feature
-        for feature in self.features.features:
+        for feature in self.graph.features:
             if not feature or not hasattr(feature, "type") or feature.type != "lake":
                 continue
 
@@ -804,9 +799,9 @@ class Hydrology:
             lake_cells = []
             if (
                 hasattr(self.features, "feature_ids")
-                and self.features.feature_ids is not None
+                and self.graph.features.feature_ids is not None
             ):
-                for i, fid in enumerate(self.features.feature_ids):
+                for i, fid in enumerate(self.graph.features.feature_ids):
                     if fid == feature.id:
                         lake_cells.append(i)
 
@@ -843,10 +838,10 @@ class Hydrology:
             for neighbor_id in neighbors:
                 # If neighbor is not part of this lake, current cell is on perimeter
                 if (
-                    not hasattr(self.features, "feature_ids")
-                    or self.features.feature_ids is None
-                    or neighbor_id >= len(self.features.feature_ids)
-                    or self.features.feature_ids[neighbor_id] != lake_feature.id
+                    not hasattr(self.graph.features, "feature_ids")
+                    or self.graph.features.feature_ids is None
+                    or neighbor_id >= len(self.graph.features.feature_ids)
+                    or self.graph.features.feature_ids[neighbor_id] != lake_feature.id
                 ):
                     perimeter_cells.append(cell_id)
                     break
@@ -885,32 +880,32 @@ class Hydrology:
         for cell_id in land_cells:
             # Step 1: Add precipitation flux to this cell
             if (
-                hasattr(self.climate, "precipitation")
+                hasattr(self.graph.precipitation, "precipitation")
                 and hasattr(self.graph, "grid_indices")
                 and self.graph.grid_indices is not None
             ):
                 # Use grid mapping to access original climate data
                 grid_cell_id = self.graph.grid_indices[cell_id]
-                if isinstance(self.climate.precipitation, dict):
-                    precip = self.climate.precipitation.get(grid_cell_id, 50.0)
+                if isinstance(self.graph.precipitation, dict):
+                    precip = self.graph.precipitation.get(grid_cell_id, 50.0)
                 else:
                     precip = (
-                        self.climate.precipitation[grid_cell_id]
-                        if grid_cell_id < len(self.climate.precipitation)
+                        self.graph.precipitation[grid_cell_id]
+                        if grid_cell_id < len(self.graph.precipitation)
                         else 50.0
                     )
             else:
                 # Fallback
-                if isinstance(self.climate.precipitation, dict):
-                    precip = self.climate.precipitation.get(cell_id, 50.0)
+                if isinstance(self.graph.precipitation, dict):
+                    precip = self.graph.precipitation.get(cell_id, 50.0)
                 else:
                     precip = (
-                        self.climate.precipitation[cell_id]
-                        if cell_id < len(self.climate.precipitation)
+                        self.graph.precipitation[cell_id]
+                        if cell_id < len(self.graph.precipitation)
                         else 50.0
                     )
 
-            self.flux[cell_id] += precip / cells_number_modifier
+            self.graph.flux[cell_id] += precip / cells_number_modifier
 
             # Step 2: Check if this cell is a lake outlet
             if cell_id in lake_out_cells:
@@ -927,9 +922,9 @@ class Hydrology:
                                 and self.graph.heights[neighbor_id]
                                 < self.options.sea_level
                                 and hasattr(self.features, "feature_ids")
-                                and self.features.feature_ids is not None
-                                and neighbor_id < len(self.features.feature_ids)
-                                and self.features.feature_ids[neighbor_id] == lake.id
+                                and self.graph.features.feature_ids is not None
+                                and neighbor_id < len(self.graph.features.feature_ids)
+                                and self.graph.features.feature_ids[neighbor_id] == lake.id
                             ):
                                 lake_cell = neighbor_id
                                 break
@@ -937,21 +932,21 @@ class Hydrology:
                         if lake_cell is not None:
                             # Add excess lake water to the lake cell
                             excess_water = max(lake.flux - lake.evaporation, 0)
-                            self.flux[lake_cell] += excess_water
+                            self.graph.flux[lake_cell] += excess_water
 
                             # Handle river creation/assignment for lake (matches FMG logic)
-                            if self.river_ids[lake_cell] != 0:
+                            if self.graph.river_ids[lake_cell] != 0:
                                 # Check if we should keep existing river identity
-                                lake_river = self.river_ids[lake_cell]
+                                lake_river = self.graph.river_ids[lake_cell]
                                 same_river = any(
-                                    self.river_ids[n] == lake_river
+                                    self.graph.river_ids[n] == lake_river
                                     for n in self._get_neighbors(lake_cell)
-                                    if n < len(self.river_ids)
+                                    if n < len(self.graph.river_ids)
                                 )
 
                                 if not same_river:
                                     # Create new river for lake
-                                    self.river_ids[lake_cell] = self.next_river_id
+                                    self.graph.river_ids[lake_cell] = self.next_river_id
                                     self.rivers[self.next_river_id] = RiverData(
                                         id=self.next_river_id
                                     )
@@ -961,7 +956,7 @@ class Hydrology:
                                     self.next_river_id += 1
                             else:
                                 # Create new river for lake
-                                self.river_ids[lake_cell] = self.next_river_id
+                                self.graph.river_ids[lake_cell] = self.next_river_id
                                 self.rivers[self.next_river_id] = RiverData(
                                     id=self.next_river_id
                                 )
@@ -969,10 +964,10 @@ class Hydrology:
                                 self.next_river_id += 1
 
                             # Set lake outlet river
-                            lake.outlet = self.river_ids[lake_cell]
+                            lake.outlet = self.graph.river_ids[lake_cell]
 
                             # Flow lake water downstream
-                            self._flow_down(cell_id, self.flux[lake_cell], lake.outlet)
+                            self._flow_down(cell_id, self.graph.flux[lake_cell], lake.outlet)
 
                 # Handle tributary assignment (matches FMG)
                 if lakes:
@@ -984,10 +979,10 @@ class Hydrology:
                                     self.rivers[inlet].parent_id = outlet
 
             # Step 3: Handle near-border cells
-            if self.graph.cell_border_flags[cell_id] and self.river_ids[cell_id] > 0:
+            if self.graph.cell_border_flags[cell_id] and self.graph.river_ids[cell_id] > 0:
                 # Add border cell (-1) to river
-                if self.river_ids[cell_id] in self.rivers:
-                    self.rivers[self.river_ids[cell_id]].cells.append(-1)
+                if self.graph.river_ids[cell_id] in self.rivers:
+                    self.rivers[self.graph.river_ids[cell_id]].cells.append(-1)
                 continue
 
             # Step 4: Find downhill flow target
@@ -1007,24 +1002,24 @@ class Hydrology:
                 continue
 
             # Step 5: Handle flux transfer based on amount
-            cell_flux = self.flux[cell_id]
+            cell_flux = self.graph.flux[cell_id]
 
             if cell_flux < self.options.min_river_flux:
                 # Below river threshold - just transfer flux
                 if self.graph.heights[target_cell] >= self.options.sea_level:
-                    self.flux[target_cell] += cell_flux
+                    self.graph.flux[target_cell] += cell_flux
                 continue
 
             # Above river threshold - create/extend river
-            if self.river_ids[cell_id] == 0:
+            if self.graph.river_ids[cell_id] == 0:
                 # Create new river
                 river_id = self.next_river_id
                 self.next_river_id += 1
                 self.rivers[river_id] = RiverData(id=river_id)
-                self.river_ids[cell_id] = river_id
+                self.graph.river_ids[cell_id] = river_id
                 self.rivers[river_id].cells.append(cell_id)
             else:
-                river_id = self.river_ids[cell_id]
+                river_id = self.graph.river_ids[cell_id]
 
             # Flow water downstream using FMG's flowDown logic
             self._flow_down(target_cell, cell_flux, river_id)
@@ -1060,11 +1055,11 @@ class Hydrology:
             # Check if neighbor belongs to any excluded lake
             in_excluded_lake = False
             if (
-                hasattr(self.features, "feature_ids")
-                and self.features.feature_ids is not None
-                and neighbor_id < len(self.features.feature_ids)
+                hasattr(self.graph.features, "feature_ids")
+                and self.graph.features.feature_ids is not None
+                and neighbor_id < len(self.graph.features.feature_ids)
             ):
-                feature_id = self.features.feature_ids[neighbor_id]
+                feature_id = self.graph.features.feature_ids[neighbor_id]
                 if feature_id in lake_ids:
                     in_excluded_lake = True
 
@@ -1088,8 +1083,8 @@ class Hydrology:
 
     def _create_or_extend_river(self, from_cell: int, to_cell: int) -> None:
         """Create new river or extend existing one."""
-        from_river_id = self.river_ids[from_cell]
-        to_river_id = self.river_ids[to_cell]
+        from_river_id = self.graph.river_ids[from_cell]
+        to_river_id = self.graph.river_ids[to_cell]
 
         if from_river_id == 0 and to_river_id == 0:
             # Create new river
@@ -1097,32 +1092,32 @@ class Hydrology:
             self.next_river_id += 1
 
             self.rivers[river_id] = RiverData(id=river_id)
-            self.river_ids[from_cell] = river_id
+            self.graph.river_ids[from_cell] = river_id
             self.rivers[river_id].cells.append(from_cell)
 
         elif from_river_id > 0 and to_river_id == 0:
             # Extend existing river
-            self.river_ids[to_cell] = from_river_id
+            self.graph.river_ids[to_cell] = from_river_id
             self.rivers[from_river_id].cells.append(to_cell)
 
         elif from_river_id == 0 and to_river_id > 0:
             # Join existing river
-            self.river_ids[from_cell] = to_river_id
+            self.graph.river_ids[from_cell] = to_river_id
             self.rivers[to_river_id].cells.append(from_cell)
 
         elif from_river_id > 0 and to_river_id > 0 and from_river_id != to_river_id:
             # River confluence - merge based on flux
-            from_flux = self.flux[from_cell]
-            to_flux = self.flux[to_cell]
+            from_flux = self.graph.flux[from_cell]
+            to_flux = self.graph.flux[to_cell]
 
             if from_flux > to_flux:
                 # from_river takes over
                 self._merge_rivers(to_river_id, from_river_id)
-                self.confluences[to_cell] = True
+                self.graph.confluences[to_cell] = True
             else:
                 # to_river takes over
                 self._merge_rivers(from_river_id, to_river_id)
-                self.confluences[from_cell] = True
+                self.graph.confluences[from_cell] = True
 
     def _merge_rivers(self, tributary_id: int, main_river_id: int) -> None:
         """Merge tributary river into main river."""
@@ -1134,41 +1129,41 @@ class Hydrology:
 
         # Update cell assignments
         for cell_id in tributary.cells:
-            self.river_ids[cell_id] = main_river_id
+            self.graph.river_ids[cell_id] = main_river_id
             self.rivers[main_river_id].cells.append(cell_id)
 
     def _flow_down(self, to_cell: int, from_flux: float, river_id: int) -> None:
         """Transfer flux downstream following FMG's flowDown algorithm exactly."""
         # Get current flux and river for target cell
         to_flux = (
-            self.flux[to_cell] - self.confluences[to_cell].astype(float).sum()
-            if hasattr(self.confluences[to_cell], "sum")
-            else (self.flux[to_cell] - (1.0 if self.confluences[to_cell] else 0.0))
+            self.graph.flux[to_cell] - self.graph.confluences[to_cell].astype(float).sum()
+            if hasattr(self.graph.confluences[to_cell], "sum")
+            else (self.graph.flux[to_cell] - (1.0 if self.graph.confluences[to_cell] else 0.0))
         )
-        to_river_id = self.river_ids[to_cell]
+        to_river_id = self.graph.river_ids[to_cell]
 
         if to_river_id > 0:
             # Handle river confluence - FMG logic
             if from_flux > to_flux:
                 # Incoming river is larger - takes over
-                self.confluences[to_cell] = True
+                self.graph.confluences[to_cell] = True
                 # Set tributary relationship
                 if to_river_id in self.rivers:
                     self.rivers[to_river_id].parent_id = river_id
                 # Reassign cell to larger river
-                self.river_ids[to_cell] = river_id
+                self.graph.river_ids[to_cell] = river_id
             else:
                 # Existing river is larger - incoming becomes tributary
-                self.confluences[to_cell] = True
+                self.graph.confluences[to_cell] = True
                 if river_id in self.rivers:
                     self.rivers[river_id].parent_id = to_river_id
         else:
             # Assign river to new cell
-            self.river_ids[to_cell] = river_id
+            self.graph.river_ids[to_cell] = river_id
 
         # CRITICAL: Accumulate flux downstream if on land
         if self.graph.heights[to_cell] >= self.options.sea_level:
-            self.flux[to_cell] += from_flux
+            self.graph.flux[to_cell] += from_flux
         else:
             # Pour water to water body (lake or ocean)
             if (
@@ -1229,7 +1224,7 @@ class Hydrology:
 
             # Calculate discharge (final flux at river mouth)
             mouth_cell = river.cells[-1]
-            river.discharge = self.flux[mouth_cell]
+            river.discharge = self.graph.flux[mouth_cell]
 
             # Calculate width based on discharge and slope
             river.width = self._calculate_river_width(river.discharge, river.cells)

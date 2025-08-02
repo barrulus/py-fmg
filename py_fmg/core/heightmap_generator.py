@@ -9,7 +9,12 @@ import numpy as np
 from typing import Optional, Tuple, Union, List
 from dataclasses import dataclass
 from ..utils.random import set_random_seed, get_prng
-
+from .voronoi_graph import (
+    VoronoiGraph,
+    build_cell_connectivity,
+    build_cell_vertices,
+    build_vertex_connectivity,
+)
 
 @dataclass
 class HeightmapConfig:
@@ -31,7 +36,7 @@ class HeightmapGenerator:
     optimized using NumPy for better performance.
     """
 
-    def __init__(self, config: HeightmapConfig, graph, seed: Optional[str] = None):
+    def __init__(self, config: HeightmapConfig, graph:VoronoiGraph, seed: Optional[str] = None):
         """
         Initialize the heightmap generator.
 

@@ -18,7 +18,12 @@ from typing import Dict, List, Optional, Set, Tuple
 from pydantic import BaseModel, Field, ConfigDict
 from .alea_prng import AleaPRNG
 from .name_generator import NameGenerator
-
+from .voronoi_graph import (
+    VoronoiGraph,
+    build_cell_connectivity,
+    build_cell_vertices,
+    build_vertex_connectivity,
+)
 
 logger = structlog.get_logger()
 
@@ -103,7 +108,7 @@ class ReligionGenerator:
 
     def __init__(
         self,
-        graph,
+        graph:VoronoiGraph ,
         cultures_dict: Dict,
         cell_cultures: np.ndarray,
         settlements_dict: Dict,
