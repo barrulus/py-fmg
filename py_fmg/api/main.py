@@ -405,185 +405,135 @@ async def get_map_rivers(map_id: str):
 
 
 # Background task functions
-async def run_map_generation(job_id: str, request: MapGenerationRequest):
+async def run_map_generation(job_id: str, request: dict):
     """
     Background task to generate a map.
-    
-    This is a simplified implementation - the full version would include
-    all the generation stages (heightmap, climate, rivers, biomes, etc.)
     """
+    # request = MapGenerationRequest(**request_data)  # Reconstruct request object
     logger.info("Starting map generation", job_id=job_id)
-    
+
     try:
-        # Update job status
+        # Load job once and reuse its data
         with db.get_session() as session:
             job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
             job.status = "running"
             job.started_at = datetime.utcnow()
             session.commit()
-        
-        # Stage 1: Generate Voronoi graph (10% progress)
-        logger.info("Generating Voronoi graph", job_id=job_id)
-        config = GridConfig(
-            width=request.width,
-            height=request.height,
-            cells_desired=request.cells_desired
-        )
-        
-        # Get grid seed from job (should use grid_seed for Voronoi generation)
-        with db.get_session() as session:
-            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
             grid_seed = job.grid_seed
-        
+            map_seed = job.map_seed
+
+        # Stage 1: Generate Voronoi graph
+        logger.info("Generating Voronoi graph", job_id=job_id)
+        config = GridConfig(width=request.width, height=request.height, cells_desired=request.cells_desired)
         voronoi_graph = generate_voronoi_graph(config, grid_seed)
-        
-        # Update progress
+
         with db.get_session() as session:
-            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 10
             session.commit()
-        
-        # Stage 2: Generate heightmap (30% progress)
+
+        # Stage 2: Heightmap generation
         logger.info("Generating heightmap", job_id=job_id)
         heightmap_config = HeightmapConfig(
-            width=int(request.width),
-            height=int(request.height),
+            width=request.width,
+            height=request.height,
             cells_x=voronoi_graph.cells_x,
             cells_y=voronoi_graph.cells_y,
             cells_desired=request.cells_desired
         )
-        
-        # Get map seed from job (should use map_seed for heightmap generation)
-        with db.get_session() as session:
-            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-            map_seed = job.map_seed
-        
         heightmap_gen = HeightmapGenerator(heightmap_config, voronoi_graph)
         heights = heightmap_gen.from_template(request.template_name, map_seed)
-        
-        # Assign heights to the graph
         voronoi_graph.heights = heights
-        
-        # Update progress
+
         with db.get_session() as session:
-            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 30
             session.commit()
-        
-        # Stage 3: Mark up coastlines with Features (32% progress)
+
+        # Stage 3: Coastlines
         logger.info("Marking up coastlines", job_id=job_id)
         features = Features(voronoi_graph)
         features.markup_grid()
-        
-        # Update progress
         with db.get_session() as session:
-            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 32
             session.commit()
-        
-        # Stage 4: Perform reGraph coastal resampling (35% progress)
+
+        # Stage 4: ReGraph
         logger.info("Performing reGraph coastal resampling", job_id=job_id)
         packed_graph = regraph(voronoi_graph)
-        
-        # Update progress
         with db.get_session() as session:
-            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 35
             session.commit()
-        
-        # Stage 5: Pack the reGraphed data (40% progress)
+
+        # Stage 5: Pack data
         logger.info("Packing reGraphed data", job_id=job_id)
-        # The packed_graph already contains the new Voronoi graph and heights
         packed_heights = packed_graph.heights
-        
-        # Update progress
         with db.get_session() as session:
-            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 40
             session.commit()
-        
-        # Stage 6: Generate climate (60% progress)
+
+        # Stage 6: Climate
         logger.info("Generating climate", job_id=job_id)
-        
-        # Use default map coordinates (can be made configurable later)
-        map_coords = MapCoordinates(lat_n=90, lat_s=-90)
-        climate_options = ClimateOptions()
-        
-        climate = Climate(packed_graph, options=climate_options, map_coords=map_coords)
+        climate = Climate(packed_graph, options=ClimateOptions(), map_coords=MapCoordinates(lat_n=90, lat_s=-90))
         climate.calculate_temperatures()
         climate.generate_precipitation()
-        
-        # Update progress
         with db.get_session() as session:
-            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 60
             session.commit()
-        
-        # Stage 7: Generate hydrology (70% progress)
+
+        # Stage 7: Hydrology
         logger.info("Generating hydrology", job_id=job_id)
-        
-        hydrology_options = HydrologyOptions()
-        hydrology = Hydrology(packed_graph, options=hydrology_options)
+        hydrology = Hydrology(packed_graph, options=HydrologyOptions())
         hydrology.run_full_simulation()
-        
-        # Update progress
         with db.get_session() as session:
-            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 70
             session.commit()
-        
-        # Stage 8: Generate biomes (80% progress)
+
+        # Stage 8: Biomes
         logger.info("Generating biomes", job_id=job_id)
-        
-        biome_options = BiomeOptions()
-        biome_classifier = BiomeClassifier(packed_graph, options=biome_options)
-        biome_classifier.run_full_classification()
-        
-        # Update progress
+        biomes = BiomeClassifier(packed_graph, options=BiomeOptions())
+        biomes.run_full_classification()
         with db.get_session() as session:
-            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 80
             session.commit()
-        
-        # TODO: Add remaining generation stages:
-        # Stage 9: Generate settlements (90% progress)
-        # Stage 10: Generate states (95% progress)
-        # Stage 11: Save to database (100% progress)
-        
-        # For now, create a basic map record
+
+        # Final: Save map
+        logger.info("Saving map", job_id=job_id)
         with db.get_session() as session:
-            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job = session.query(GenerationJob).get(job_id)
             map_name = request.map_name or f"Map {job.grid_seed}"
-            
+
             map_obj = Map(
                 name=map_name,
-                seed=job.seed,  # Legacy field
+                seed=job.seed,
                 grid_seed=job.grid_seed,
                 map_seed=job.map_seed,
-                width=request.width,
-                height=request.height,
-                cells_count=len(packed_graph.points),  # Use packed graph cell count
-                generation_time_seconds=1.0  # Placeholder
+                width=job.width,
+                height=job.height,
+                cells_count=len(packed_graph.points),
+                generation_time_seconds=1.0  # TODO: track actual time
             )
             session.add(map_obj)
-            session.flush()  # Get the ID
-            
-            # Update job
-            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            session.flush()
+            map_id = map_obj.id
             job.map_id = map_obj.id
             job.status = "completed"
             job.progress_percent = 100
             job.completed_at = datetime.utcnow()
             session.commit()
-        
-        logger.info("Map generation completed", job_id=job_id, map_id=str(map_obj.id))
-        
+
+        logger.info("Map generation completed", job_id=job_id, map_id=str(map_id))
+
     except Exception as e:
         logger.error("Map generation failed", job_id=job_id, error=str(e))
-        
-        # Update job with error
         with db.get_session() as session:
-            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job = session.query(GenerationJob).get(job_id)
             job.status = "failed"
             job.error_message = str(e)
             job.completed_at = datetime.utcnow()
