@@ -11,6 +11,14 @@ ported from FMG's heightmap-templates.js.
 # Add, Multiply, Invert
 
 TEMPLATES = {
+    "default": """Hill 1 90-100 44-56 40-60
+    Multiply 0.8 50-100 0 0
+    Range 1.5 30-55 45-55 40-60
+    Smooth 3 0 0 0
+    Hill 1.5 35-45 25-30 20-75
+    Hill 1 35-55 75-80 25-75
+    Hill 0.5 20-25 10-15 20-25
+    Mask 3 0 0 0""",
     "volcano": """Hill 1 90-100 44-56 40-60
     Multiply 0.8 50-100 0 0
     Range 1.5 30-55 45-55 40-60
