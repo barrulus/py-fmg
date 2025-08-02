@@ -1,5 +1,6 @@
 """Configuration management."""
 
+
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -15,15 +16,18 @@ for key in ["DB_USER", "DB_PASSWORD", "DB_PORT", "DB_HOST"]:
 
 print(BASE_DIR)
 
+
 class Settings(BaseSettings):
     """Application settings."""
 
     # Database
+
     db_user: str = Field(default="user", description="Database user")
     db_host: str = Field(default="localhost", description="Database host")
     db_name: str = Field(default="py-fmg", description="Database name")
     db_password: str = Field(default="password", description="Database password")
     db_port: str = Field(default="5432", description="Database port")  # ⚠️ int default
+
 
     @property
     def database_url(self) -> str:
@@ -36,6 +40,7 @@ class Settings(BaseSettings):
 
     # Generation
     max_map_size: int = Field(default=2048, description="Maximum map size")
+
     generation_timeout: int = Field(default=300, description="Generation timeout in seconds")
 
     # Logging
@@ -47,3 +52,4 @@ class Settings(BaseSettings):
 
 # Instantiate once, to be imported throughout app
 settings = Settings()
+

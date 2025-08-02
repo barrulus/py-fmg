@@ -8,11 +8,16 @@ expansion patterns, and geographical preferences matching the original FMG.
 from __future__ import annotations
 
 import math
+
+from dataclasses import dataclass, field
+
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import structlog
+
 from pydantic import BaseModel, Field, ConfigDict
+
 
 from .alea_prng import AleaPRNG
 from .biomes import BiomeClassifier
@@ -51,6 +56,7 @@ class Culture(BaseModel):
     cells: Set[int] = Field(default_factory=set, description="Cells belonging to this culture")
     removed: bool = Field(default=False, description="Whether culture has been removed")
     name_base: int = Field(default=0, description="Index into name bases")
+
 
 
 class CultureGenerator:

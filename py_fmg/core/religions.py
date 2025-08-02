@@ -13,16 +13,22 @@ from __future__ import annotations
 import colorsys
 import heapq
 import math
+
+from dataclasses import dataclass, field
+
 from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import structlog
+
 from pydantic import BaseModel, Field, ConfigDict
+
 
 from .alea_prng import AleaPRNG
 from .name_generator import NameGenerator
 
 logger = structlog.get_logger()
+
 
 
 class ReligionOptions(BaseModel):
@@ -57,7 +63,6 @@ class Religion(BaseModel):
     area: float = Field(default=0.0, description="Total area covered")
     rural_population: float = Field(default=0.0, description="Rural population following")
     urban_population: float = Field(default=0.0, description="Urban population following")
-
 
 class ReligionGenerator:
     """Generates religions following FMG's algorithm."""

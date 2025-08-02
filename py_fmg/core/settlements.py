@@ -14,16 +14,21 @@ Process:
 """
 
 import heapq
+
+from dataclasses import dataclass, field
+
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import structlog
+
 from pydantic import BaseModel, Field, ConfigDict
 from sklearn.neighbors import KDTree
 
 from .name_generator import NameGenerator
 
 logger = structlog.get_logger()
+
 
 
 class SettlementOptions(BaseModel):
@@ -93,7 +98,6 @@ class State(BaseModel):
     territory_cells: List[int] = Field(default_factory=list, description="Cells controlled by this state")
     removed: bool = Field(default=False, description="Whether state has been removed")
     locked: bool = Field(default=False, description="Whether state expansion is locked")
-
 
 class Settlements:
     """Handles settlement placement and state generation."""

@@ -1,5 +1,6 @@
 """FastAPI main application."""
 
+
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -7,16 +8,24 @@ from typing import List, Optional, Tuple
 from typing import Optional
 import structlog
 import logging
+
 import uuid
 from datetime import datetime
+from typing import Dict, Optional
+
+import numpy as np
+import structlog
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 from ..config import settings
-from ..db.connection import db
-from ..db.models import GenerationJob, Map
-from ..core.voronoi_graph import GridConfig, generate_voronoi_graph
-from ..core.heightmap_generator import HeightmapGenerator, HeightmapConfig
+from ..core.biomes import BiomeClassifier
 from ..core.cell_packing import regraph
+from ..core.climate import Climate
+from ..core.cultures import CultureGenerator
 from ..core.features import Features
+
 from ..core.climate import Climate, ClimateOptions, MapCoordinates
 from ..core.hydrology import Hydrology, HydrologyOptions
 from ..core.biomes import BiomeClassifier, BiomeOptions
@@ -26,6 +35,25 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
     handlers=[logging.StreamHandler()]
+
+from ..core.heightmap_generator import HeightmapConfig, HeightmapGenerator
+from ..core.hydrology import Hydrology
+from ..core.name_generator import NameGenerator
+from ..core.settlements import Settlements
+from ..core.voronoi_graph import GridConfig, generate_voronoi_graph
+from ..db.connection import db
+from ..db.models import (
+    GenerationJob,
+    Map,
+    VoronoiCell,
+    ClimateData,
+    River,
+    Culture,
+    CellCulture,
+    BiomeRegion,
+    Religion,
+    CellReligion,
+    Settlement,
 )
 
 # Then configure structlog
@@ -35,7 +63,7 @@ structlog.configure(
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
         structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.JSONRenderer()
+        structlog.processors.JSONRenderer(),
     ],
     wrapper_class=structlog.stdlib.BoundLogger,
     logger_factory=structlog.stdlib.LoggerFactory(),
@@ -48,7 +76,7 @@ logger = structlog.get_logger()
 app = FastAPI(
     title="Fantasy Map Generator API",
     description="Python port of Azgaar's Fantasy Map Generator",
-    version="0.1.0"
+    version="0.1.0",
 )
 
 # Add CORS middleware
@@ -64,20 +92,22 @@ app.add_middleware(
 # Request/Response models
 class MapGenerationRequest(BaseModel):
     """Request to generate a new map."""
-    
-    seed: Optional[str] = Field(None, description="Random seed for reproducible generation (deprecated, use grid_seed)")
-    grid_seed: Optional[str] = Field(None, description="Random seed for grid/Voronoi generation")
-    map_seed: Optional[str] = Field(None, description="Random seed for heightmap generation")
+
+    seed: Optional[str] = Field(
+        None, description="Random seed for reproducible generation"
+    )
     width: float = Field(800, ge=100, le=2000, description="Map width")
     height: float = Field(600, ge=100, le=2000, description="Map height")
-    cells_desired: int = Field(10000, ge=1000, le=50000, description="Target number of cells")
+    cells_desired: int = Field(
+        10000, ge=1000, le=50000, description="Target number of cells"
+    )
     template_name: str = Field("default", description="Heightmap template name")
     map_name: Optional[str] = Field(None, description="Custom map name")
 
 
 class JobResponse(BaseModel):
     """Response with job information."""
-    
+
     job_id: str
     status: str
     progress_percent: int
@@ -88,12 +118,10 @@ class JobResponse(BaseModel):
 
 class MapSummary(BaseModel):
     """Summary information about a generated map."""
-    
+
     id: str
     name: str
-    seed: str  # Legacy field for backwards compatibility
-    grid_seed: str  # Seed used for Voronoi grid generation
-    map_seed: str   # Seed used for heightmap generation
+    seed: str
     width: float
     height: float
     cells_count: int
@@ -192,7 +220,7 @@ class SettlementInfo(BaseModel):
 
 # Event handlers
 @app.on_event("startup")
-async def startup_event():
+async def startup_event() -> None:
     """Initialize database on startup."""
     logger.info("Starting Fantasy Map Generator API")
     db.initialize()
@@ -200,30 +228,32 @@ async def startup_event():
 
 
 @app.on_event("shutdown")
-async def shutdown_event():
+async def shutdown_event() -> None:
     """Cleanup on shutdown."""
     logger.info("Shutting down Fantasy Map Generator API")
 
 
 # API endpoints
 @app.get("/")
-async def root():
+async def root() -> Dict[str, str]:
     """Root endpoint."""
     return {
         "message": "Fantasy Map Generator API",
         "version": "0.1.0",
-        "status": "running"
+        "status": "running",
     }
 
 
 @app.get("/health")
-async def health_check():
+async def health_check() -> Dict[str, str]:
     """Health check endpoint."""
     try:
         # Test database connection
+        from sqlalchemy import text
+
         with db.get_session() as session:
-            session.execute("SELECT 1")
-        
+            session.execute(text("SELECT 1"))
+
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
         logger.error("Health check failed", error=str(e))
@@ -231,121 +261,124 @@ async def health_check():
 
 
 @app.post("/maps/generate", response_model=JobResponse)
-async def generate_map(request: MapGenerationRequest, background_tasks: BackgroundTasks):
+async def generate_map(
+    request: MapGenerationRequest, background_tasks: BackgroundTasks
+) -> JobResponse:
     """
     Start map generation job.
-    
-    Returns immediately with job ID. Use /jobs/{job_id} to check status.
+
+    Returns immediately with job ID. Use /maps/status/{job_id} to check status.
     """
     logger.info("Map generation requested", request=request.dict())
-    
+
     # Generate unique job ID
     job_id = str(uuid.uuid4())
-    
-    # Handle seed logic: support both legacy single seed and new dual seed system
-    if request.grid_seed or request.map_seed:
-        # New dual seed system
-        grid_seed = request.grid_seed or request.map_seed or str(uuid.uuid4())[:8]
-        map_seed = request.map_seed or request.grid_seed or str(uuid.uuid4())[:8]
-    else:
-        # Legacy single seed or fallback
-        legacy_seed = request.seed or str(uuid.uuid4())[:8]
-        grid_seed = legacy_seed
-        map_seed = legacy_seed
-    
+
+    # Generate seed if not provided
+    seed = request.seed or str(uuid.uuid4())[:8]
+
     # Create job record
     with db.get_session() as session:
         job = GenerationJob(
             id=job_id,
-            seed=request.seed or grid_seed,  # Keep legacy field populated
-            grid_seed=grid_seed,
-            map_seed=map_seed,
+            seed=seed,
             width=request.width,
             height=request.height,
             cells_desired=request.cells_desired,
             template_name=request.template_name,
-            status="pending"
+            status="pending",
         )
         session.add(job)
         session.commit()
-    
+
     # Start background generation
-    background_tasks.add_task(
-        run_map_generation,
-        job_id,
-        request
-    )
-    
+    background_tasks.add_task(run_map_generation, job_id, request)
+
     return JobResponse(
         job_id=job_id,
         status="pending",
         progress_percent=0,
-        message="Map generation job started"
+        message="Map generation job started",
     )
 
 
 @app.get("/jobs/{job_id}", response_model=JobResponse)
-async def get_job_status(job_id: str):
+async def get_job_status(job_id: str) -> JobResponse:
     """Get status of a map generation job."""
     with db.get_session() as session:
         job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-        
+
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        
+
         return JobResponse(
             job_id=str(job.id),
             status=job.status,
             progress_percent=job.progress_percent,
             message=f"Job {job.status}",
             map_id=str(job.map_id) if job.map_id else None,
-            error_message=job.error_message
+            error_message=job.error_message,
+        )
+
+
+@app.get("/maps/status/{job_id}", response_model=JobResponse)
+async def get_map_generation_status(job_id: str) -> JobResponse:
+    """Get status of a map generation job (alternative endpoint path as specified in issue #11)."""
+    with db.get_session() as session:
+        job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        return JobResponse(
+            job_id=str(job.id),
+            status=job.status,
+            progress_percent=job.progress_percent,
+            message=f"Job {job.status}",
+            map_id=str(job.map_id) if job.map_id else None,
+            error_message=job.error_message,
         )
 
 
 @app.get("/maps", response_model=list[MapSummary])
-async def list_maps():
+async def list_maps() -> list[MapSummary]:
     """List all generated maps."""
     with db.get_session() as session:
         maps = session.query(Map).order_by(Map.created_at.desc()).all()
-        
+
         return [
             MapSummary(
                 id=str(map.id),
                 name=map.name,
                 seed=map.seed,
-                grid_seed=map.grid_seed,
-                map_seed=map.map_seed,
                 width=map.width,
                 height=map.height,
                 cells_count=map.cells_count,
                 created_at=map.created_at,
-                generation_time_seconds=map.generation_time_seconds
+                generation_time_seconds=map.generation_time_seconds,
             )
             for map in maps
         ]
 
 
 @app.get("/maps/{map_id}", response_model=MapSummary)
-async def get_map(map_id: str):
+async def get_map(map_id: str) -> MapSummary:
     """Get map details."""
     with db.get_session() as session:
         map_obj = session.query(Map).filter(Map.id == map_id).first()
-        
+
         if not map_obj:
             raise HTTPException(status_code=404, detail="Map not found")
-        
+
         return MapSummary(
             id=str(map_obj.id),
             name=map_obj.name,
             seed=map_obj.seed,
-            grid_seed=map_obj.grid_seed,
-            map_seed=map_obj.map_seed,
             width=map_obj.width,
             height=map_obj.height,
             cells_count=map_obj.cells_count,
             created_at=map_obj.created_at,
-            generation_time_seconds=map_obj.generation_time_seconds
+            generation_time_seconds=map_obj.generation_time_seconds,
         )
 
 
@@ -518,9 +551,12 @@ async def get_map_settlements(map_id: str):
 
 
 # Background task functions
-async def run_map_generation(job_id: str, request: dict):
+async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None:
     """
     Background task to generate a map.
+
+    This is a simplified implementation - the full version would include
+    all the generation stages (heightmap, climate, rivers, biomes, etc.)
     """
     # request = MapGenerationRequest(**request_data)  # Reconstruct request object
     logger.info("Starting map generation", job_id=job_id)
@@ -528,7 +564,9 @@ async def run_map_generation(job_id: str, request: dict):
     try:
         # Load job once and reuse its data
         with db.get_session() as session:
-            job = session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            job = (
+                session.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+            )
             job.status = "running"
             job.started_at = datetime.utcnow()
             session.commit()
@@ -546,13 +584,15 @@ async def run_map_generation(job_id: str, request: dict):
             session.commit()
 
         # Stage 2: Heightmap generation
+
         logger.info("Generating heightmap", job_id=job_id)
         heightmap_config = HeightmapConfig(
             width=request.width,
             height=request.height,
             cells_x=voronoi_graph.cells_x,
             cells_y=voronoi_graph.cells_y,
-            cells_desired=request.cells_desired
+            cells_desired=request.cells_desired,
+            spacing=voronoi_graph.spacing,
         )
         heightmap_gen = HeightmapGenerator(heightmap_config, voronoi_graph)
         heights = heightmap_gen.from_template(request.template_name, map_seed)
@@ -564,9 +604,11 @@ async def run_map_generation(job_id: str, request: dict):
             session.commit()
 
         # Stage 3: Coastlines
+
         logger.info("Marking up coastlines", job_id=job_id)
-        features = Features(voronoi_graph)
+        features = Features(voronoi_graph, seed=seed)
         features.markup_grid()
+
         with db.get_session() as session:
             job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 32
@@ -583,6 +625,7 @@ async def run_map_generation(job_id: str, request: dict):
         # Stage 5: Pack data
         logger.info("Packing reGraphed data", job_id=job_id)
         packed_heights = packed_graph.heights
+
         with db.get_session() as session:
             job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 40
@@ -636,6 +679,7 @@ async def run_map_generation(job_id: str, request: dict):
             session.flush()
             map_id = map_obj.id
             job.map_id = map_obj.id
+
             job.status = "completed"
             job.progress_percent = 100
             job.completed_at = datetime.utcnow()
@@ -645,6 +689,7 @@ async def run_map_generation(job_id: str, request: dict):
 
     except Exception as e:
         logger.error("Map generation failed", job_id=job_id, error=str(e))
+
         with db.get_session() as session:
             job = session.query(GenerationJob).get(job_id)
             job.status = "failed"
@@ -655,4 +700,5 @@ async def run_map_generation(job_id: str, request: dict):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host=settings.api_host, port=settings.api_port)

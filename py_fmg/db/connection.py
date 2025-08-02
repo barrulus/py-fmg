@@ -6,7 +6,7 @@ from sqlalchemy.pool import StaticPool
 import structlog
 from contextlib import contextmanager
 
-from ..config import settings
+from ..config.config import settings
 from .models import Base
 
 logger = structlog.get_logger()
@@ -42,8 +42,10 @@ class Database:
         """Create all tables."""
         try:
             # Ensure PostGIS extension exists
+            from sqlalchemy import text
             with self.engine.connect() as conn:
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))  # ✅ Wrapped in text()
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis")) 
+
                 conn.commit()
 
             # Create all tables
