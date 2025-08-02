@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Tuple
 from typing import Optional
 import structlog
+import logging
 import uuid
 from datetime import datetime
 
@@ -20,7 +21,14 @@ from ..core.climate import Climate, ClimateOptions, MapCoordinates
 from ..core.hydrology import Hydrology, HydrologyOptions
 from ..core.biomes import BiomeClassifier, BiomeOptions
 
-# Configure logging
+# Set up standard logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    handlers=[logging.StreamHandler()]
+)
+
+# Then configure structlog
 structlog.configure(
     processors=[
         structlog.stdlib.filter_by_level,
@@ -137,6 +145,49 @@ class ClimateData(BaseModel):
     precipitation: int
     biome: str
     height: int
+
+
+class CultureInfo(BaseModel):
+    """Information about a culture."""
+    
+    id: int
+    name: str
+    color: str
+    type: str
+    area_km2: float
+    population: int
+    expansionism: float
+    center_cell: int
+
+
+class ReligionInfo(BaseModel):
+    """Information about a religion."""
+    
+    id: int
+    name: str
+    color: str
+    type: str
+    form: str
+    deity: Optional[str]
+    expansion: str
+    expansionism: float
+    area_km2: float
+    rural_population: float
+    urban_population: float
+
+
+class SettlementInfo(BaseModel):
+    """Information about a settlement."""
+    
+    id: int
+    name: str
+    type: str
+    population: int
+    is_capital: bool
+    is_port: bool
+    culture_name: Optional[str]
+    state_name: Optional[str]
+    religion_name: Optional[str]
 
 
 # Event handlers
@@ -401,6 +452,68 @@ async def get_map_rivers(map_id: str):
             RiverInfo(id=3, length=120.8, flow=45.0, source_cell=300, mouth_cell=4500, cell_count=22),
             RiverInfo(id=4, length=95.3, flow=35.0, source_cell=400, mouth_cell=4200, cell_count=18),
             RiverInfo(id=5, length=75.1, flow=25.0, source_cell=500, mouth_cell=4000, cell_count=15),
+        ]
+
+
+@app.get("/maps/{map_id}/cultures", response_model=List[CultureInfo])
+async def get_map_cultures(map_id: str):
+    """Get culture information for a map."""
+    with db.get_session() as session:
+        map_obj = session.query(Map).filter(Map.id == map_id).first()
+        
+        if not map_obj:
+            raise HTTPException(status_code=404, detail="Map not found")
+        
+        # For now, return mock culture data
+        # In a full implementation, this would load the actual culture data from the database
+        
+        return [
+            CultureInfo(id=1, name="Northmen", color="#9e2a2b", type="Highland", area_km2=15000.0, population=250000, expansionism=1.2, center_cell=1500),
+            CultureInfo(id=2, name="Islanders", color="#4682b4", type="Naval", area_km2=8000.0, population=180000, expansionism=1.5, center_cell=2800),
+            CultureInfo(id=3, name="Desert Riders", color="#daa520", type="Nomadic", area_km2=20000.0, population=120000, expansionism=0.8, center_cell=3200),
+            CultureInfo(id=4, name="Forest Folk", color="#0f8040", type="Generic", area_km2=12000.0, population=200000, expansionism=1.0, center_cell=1800),
+            CultureInfo(id=5, name="River People", color="#6ba9cb", type="River", area_km2=9000.0, population=160000, expansionism=1.1, center_cell=2200),
+        ]
+
+
+@app.get("/maps/{map_id}/religions", response_model=List[ReligionInfo])
+async def get_map_religions(map_id: str):
+    """Get religion information for a map."""
+    with db.get_session() as session:
+        map_obj = session.query(Map).filter(Map.id == map_id).first()
+        
+        if not map_obj:
+            raise HTTPException(status_code=404, detail="Map not found")
+        
+        # For now, return mock religion data
+        # In a full implementation, this would load the actual religion data from the database
+        
+        return [
+            ReligionInfo(id=1, name="The Old Gods", color="#8b4513", type="Folk", form="Shamanism", deity=None, expansion="culture", expansionism=0.5, area_km2=15000.0, rural_population=200000.0, urban_population=50000.0),
+            ReligionInfo(id=2, name="Church of the Sun", color="#ffd700", type="Organized", form="Monotheism", deity="Solaris", expansion="global", expansionism=2.0, area_km2=25000.0, rural_population=300000.0, urban_population=120000.0),
+            ReligionInfo(id=3, name="Order of the Deep", color="#1a4b5c", type="Organized", form="Polytheism", deity="Thalassa", expansion="state", expansionism=1.5, area_km2=12000.0, rural_population=150000.0, urban_population=80000.0),
+            ReligionInfo(id=4, name="Wind Walkers", color="#87ceeb", type="Folk", form="Animism", deity=None, expansion="culture", expansionism=0.8, area_km2=18000.0, rural_population=180000.0, urban_population=40000.0),
+        ]
+
+
+@app.get("/maps/{map_id}/settlements", response_model=List[SettlementInfo])
+async def get_map_settlements(map_id: str):
+    """Get settlement information for a map."""
+    with db.get_session() as session:
+        map_obj = session.query(Map).filter(Map.id == map_id).first()
+        
+        if not map_obj:
+            raise HTTPException(status_code=404, detail="Map not found")
+        
+        # For now, return mock settlement data
+        # In a full implementation, this would load the actual settlement data from the database
+        
+        return [
+            SettlementInfo(id=1, name="Ironhold", type="capital", population=45000, is_capital=True, is_port=False, culture_name="Northmen", state_name="Northern Kingdom", religion_name="The Old Gods"),
+            SettlementInfo(id=2, name="Seahaven", type="city", population=28000, is_capital=False, is_port=True, culture_name="Islanders", state_name="Maritime Republic", religion_name="Order of the Deep"),
+            SettlementInfo(id=3, name="Goldspire", type="capital", population=38000, is_capital=True, is_port=False, culture_name="Desert Riders", state_name="Desert Emirates", religion_name="Church of the Sun"),
+            SettlementInfo(id=4, name="Greenwood", type="town", population=12000, is_capital=False, is_port=False, culture_name="Forest Folk", state_name="Woodland Alliance", religion_name="The Old Gods"),
+            SettlementInfo(id=5, name="Rivermouth", type="city", population=22000, is_capital=False, is_port=True, culture_name="River People", state_name="River Confederacy", religion_name="Wind Walkers"),
         ]
 
 
