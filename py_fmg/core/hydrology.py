@@ -87,15 +87,17 @@ class RiverData:
 class Hydrology:
     """Handles water flow simulation and river generation."""
 
-    def __init__(self, graph, options: Optional[HydrologyOptions] = None):
+    def __init__(self, graph, features=None, options: Optional[HydrologyOptions] = None):
         """
         Initialize hydrology system.
 
         Args:
             graph: VoronoiGraph with heights and precipitation populated
+            features: Optional Features object for advanced lake handling
             options: Hydrology calculation options
         """
         self.graph = graph
+        self.features = features  # Optional features for lake handling
         self.options = options or HydrologyOptions()
 
         # Water flow arrays
@@ -581,26 +583,11 @@ class Hydrology:
         check_lake_max_iteration = int(max_iterations * 0.85)
         elevate_lake_max_iteration = int(max_iterations * 0.75)
 
-        # Helper function to get height of lake or cell (matches FMG's height function)
+        # Helper function to get height of lake or cell (simplified version)
         def height(i: int) -> float:
-            if (
-                hasattr(self.graph, "feature_ids")
-                and self.graph.feature_ids is not None
-                and i < len(self.graph.feature_ids)
-            ):
-                feature_id = self.graph.feature_ids[i]
-                if feature_id > 0 and hasattr(self.graph, "features") and feature_id in self.graph.features:
-                    feature = self.graph.features[feature_id]
-                    if (
-                        feature
-                        and hasattr(feature, "id")
-                        and feature.id == feature_id
-                        ):
-                            if (
-                                hasattr(feature, "height")
-                                and feature.height is not None
-                            ):
-                                return feature.height
+            # For now, just return the basic height from the graph
+            # In the future, this could be extended to handle lake features
+            # if they are properly integrated into the graph structure
             return self.graph.heights[i]
 
         # Get lakes and land cells

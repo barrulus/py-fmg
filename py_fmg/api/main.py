@@ -28,6 +28,8 @@ from ..core.features import Features
 from ..core.climate import Climate, ClimateOptions, MapCoordinates
 from ..core.hydrology import Hydrology, HydrologyOptions
 from ..core.biomes import BiomeClassifier, BiomeOptions
+from .editor_simple import router as editor_router
+from .visualizer import router as visualizer_router
 
 # Set up standard logging
 logging.basicConfig(
@@ -85,6 +87,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(editor_router)
+app.include_router(visualizer_router)
 
 
 # Request/Response models

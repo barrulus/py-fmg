@@ -1,0 +1,186 @@
+version: "3.9"
+
+services:
+  web:
+    build: .
+    container_name: py-fmg-app
+    ports:
+      - "9888:8000"
+    volumes:
+      - .:/app
+      - tiles_output:/app/tiles  # Volume pour les tuiles 3D
+    env_file:
+      - .env.docker # add db URL case dockerbuild
+    depends_on:
+      - db
+
+  db:
+    image: postgis/postgis:14-3.3
+    container_name: py-fmg-db
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "${DB_PORT}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./setup_3d_views.sql:/docker-entrypoint-initdb.d/setup_3d_views.sql
+
+  # Service pour générer les tuiles terrain
+  pg2b3dm-terrain:
+    image: geodan/pg2b3dm:latest
+    container_name: py-fmg-3d-terrain
+    restart: "no"  # Run once
+    environment:
+      PGPASSWORD: ${DB_PASSWORD}
+    volumes:
+      - tiles_output:/tiles
+    depends_on:
+      - db
+    command:
+      [
+        "-h", "db",
+        "-U", "${DB_USER}",
+        "-d", "${DB_NAME}",
+        "-c", "SELECT id, terrain_type, ST_Force3D(geom) as geom, color FROM terrain_3d WHERE geom IS NOT NULL",
+        "-t", "terrain_tiles",
+        "--geometrycolumn", "geom",
+        "--attributescolumn", "color",
+        "-o", "/tiles/terrain",
+        "-g", "5000",
+        "--max_features_per_tile", "500"
+      ]
+
+  # Service pour générer les tuiles établissements
+  pg2b3dm-settlements:
+    image: geodan/pg2b3dm:latest
+    container_name: py-fmg-3d-settlements
+    restart: "no"  # Run once
+    environment:
+      PGPASSWORD: ${DB_PASSWORD}
+    volumes:
+      - tiles_output:/tiles
+    depends_on:
+      - db
+      - pg2b3dm-terrain
+    command:
+      [
+        "-h", "db",
+        "-U", "${DB_USER}",
+        "-d", "${DB_NAME}",
+        "-c", "SELECT id, name, settlement_class, pop_size, ST_Force3D(geom) as geom, color FROM settlements_3d WHERE geom IS NOT NULL",
+        "-t", "settlement_tiles",
+        "--geometrycolumn", "geom",
+        "--attributescolumn", "color",
+        "-o", "/tiles/settlements",
+        "-g", "2000",
+        "--max_features_per_tile", "200"
+      ]
+
+  # Service pour générer les tuiles rivières
+  pg2b3dm-rivers:
+    image: geodan/pg2b3dm:latest
+    container_name: py-fmg-3d-rivers
+    restart: "no"  # Run once
+    environment:
+      PGPASSWORD: ${DB_PASSWORD}
+    volumes:
+      - tiles_output:/tiles
+    depends_on:
+      - db
+      - pg2b3dm-settlements
+    command:
+      [
+        "-h", "db",
+        "-U", "${DB_USER}",
+        "-d", "${DB_NAME}",
+        "-c", "SELECT id, name, river_class, discharge, ST_Force3D(geom) as geom, color FROM rivers_3d WHERE geom IS NOT NULL",
+        "-t", "river_tiles",
+        "--geometrycolumn", "geom",
+        "--attributescolumn", "color",
+        "-o", "/tiles/rivers",
+        "-g", "1000",
+        "--max_features_per_tile", "100"
+      ]
+
+  # Service pour générer les tuiles cultures
+  pg2b3dm-cultures:
+    image: geodan/pg2b3dm:latest
+    container_name: py-fmg-3d-cultures
+    restart: "no"  # Run once
+    environment:
+      PGPASSWORD: ${DB_PASSWORD}
+    volumes:
+      - tiles_output:/tiles
+    depends_on:
+      - db
+      - pg2b3dm-rivers
+    command:
+      [
+        "-h", "db",
+        "-U", "${DB_USER}",
+        "-d", "${DB_NAME}",
+        "-c", "SELECT id, name, culture_type, ST_Force3D(geom) as geom, color FROM cultures_3d WHERE geom IS NOT NULL",
+        "-t", "culture_tiles",
+        "--geometrycolumn", "geom",
+        "--attributescolumn", "color",
+        "-o", "/tiles/cultures",
+        "-g", "3000",
+        "--max_features_per_tile", "50"
+      ]
+
+  # Service pour générer les tuiles états
+  pg2b3dm-states:
+    image: geodan/pg2b3dm:latest
+    container_name: py-fmg-3d-states
+    restart: "no"  # Run once
+    environment:
+      PGPASSWORD: ${DB_PASSWORD}
+    volumes:
+      - tiles_output:/tiles
+    depends_on:
+      - db
+      - pg2b3dm-cultures
+    command:
+      [
+        "-h", "db",
+        "-U", "${DB_USER}",
+        "-d", "${DB_NAME}",
+        "-c", "SELECT id, name, boundary_type, ST_Force3D(geom) as geom, color FROM states_3d WHERE geom IS NOT NULL",
+        "-t", "state_tiles",
+        "--geometrycolumn", "geom",
+        "--attributescolumn", "color",
+        "-o", "/tiles/states",
+        "-g", "4000",
+        "--max_features_per_tile", "30"
+      ]
+
+  # Service de visualisation 3D
+  cesium-viewer:
+    image: nginx:alpine
+    container_name: py-fmg-3d-viewer
+    ports:
+      - "8081:80"
+    volumes:
+      - ./viewer:/usr/share/nginx/html  # Répertoire pour le viewer Cesium
+      - tiles_output:/usr/share/nginx/html/tiles:ro  # Tuiles en lecture seule
+    depends_on:
+      - pg2b3dm-states
+
+  # Service utilitaire pour vérifier les tuiles
+  tile-checker:
+    image: alpine:latest
+    container_name: py-fmg-tile-checker
+    restart: "no"
+    volumes:
+      - tiles_output:/tiles:ro
+    command: ["sh", "-c", "find /tiles -name '*.json' -o -name '*.b3dm' | head -20 && echo 'Tile generation check complete'"]
+    depends_on:
+      - pg2b3dm-states
+
+volumes:
+  pgdata:
+  tiles_output:  # Volume partagé pour les tuiles 3D
+
