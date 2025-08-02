@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: py-fmg-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: py-fmg
+  template:
+    metadata:
+      labels:
+        app: py-fmg
+    spec:
+      containers:
+        - name: py-fmg
+          image: py-fmg-app:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DB_HOST
+              value: py-fmg-db
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: name
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: py-fmg-service
+spec:
+  selector:
+    app: py-fmg
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
