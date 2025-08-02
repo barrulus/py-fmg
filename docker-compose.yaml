@@ -9,7 +9,7 @@ services:
     volumes:
       - .:/app
     env_file:
-      - .env # add db URL case dockerbuild
+      - .env.docker # add db URL case dockerbuild
     depends_on:
       - db
 
