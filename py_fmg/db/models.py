@@ -27,9 +27,7 @@ class Map(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
-    seed = Column(String(50), nullable=False)  # Legacy field for backwards compatibility
-    grid_seed = Column(String(50), nullable=False)  # Seed for Voronoi grid generation
-    map_seed = Column(String(50), nullable=False)   # Seed for heightmap generation
+    seed = Column(String(50), nullable=False)
     width = Column(Float, nullable=False)
     height = Column(Float, nullable=False)
     cells_count = Column(Integer, nullable=False)
@@ -40,6 +38,7 @@ class Map(Base):
     config_json = Column(Text)  # JSON blob of generation parameters
     
     # Relationships
+    voronoi_cells = relationship("VoronoiCell", back_populates="map", cascade="all, delete-orphan")
     cultures = relationship("Culture", back_populates="map", cascade="all, delete-orphan")
     religions = relationship("Religion", back_populates="map", cascade="all, delete-orphan")
     states = relationship("State", back_populates="map", cascade="all, delete-orphan")
@@ -284,6 +283,36 @@ class BiomeRegion(Base):
     map = relationship("Map", back_populates="biomes")
 
 
+class VoronoiCell(Base):
+    """Voronoi cell geometries with heightmap data."""
+    
+    __tablename__ = "voronoi_cells"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    map_id = Column(UUID(as_uuid=True), ForeignKey("maps.id"), nullable=False)
+    cell_index = Column(Integer, nullable=False)  # Index in the packed graph
+    
+    # Cell geometry as polygon
+    geometry = Column(Geometry("POLYGON", srid=4326))
+    
+    # Height and geographic properties
+    height = Column(Integer, nullable=False)  # Height value
+    is_land = Column(Boolean, default=True)   # True if height >= 20
+    is_coastal = Column(Boolean, default=False)  # Coastal cell
+    
+    # Cell center point (for easy access)
+    center_x = Column(Float, nullable=False)
+    center_y = Column(Float, nullable=False)
+    
+    # Area in map units
+    area = Column(Float)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    map = relationship("Map", back_populates="voronoi_cells")
+
+
 class ClimateData(Base):
     """Temperature and precipitation data for map cells."""
     
@@ -379,9 +408,7 @@ class GenerationJob(Base):
     error_message = Column(Text)
     
     # Request parameters
-    seed = Column(String(50))  # Legacy field for backwards compatibility
-    grid_seed = Column(String(50))  # Seed for Voronoi grid generation
-    map_seed = Column(String(50))   # Seed for heightmap generation
+    seed = Column(String(50))
     width = Column(Float)
     height = Column(Float)
     cells_desired = Column(Integer)
