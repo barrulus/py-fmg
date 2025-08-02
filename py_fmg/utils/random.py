@@ -15,16 +15,16 @@ _prng = None
 def set_random_seed(seed: str) -> None:
     """
     Set the random seed for FMG's Alea PRNG.
-    
+
     This only sets the seed for the FMG-compatible Alea PRNG.
     Python's random and NumPy's random are not used to ensure
     exact compatibility with the JavaScript FMG implementation.
-    
+
     Args:
         seed: Seed string to use
     """
     global _prng
-    
+
     # Initialize Alea PRNG only
     _prng = AleaPRNG(seed)
 
@@ -32,7 +32,7 @@ def set_random_seed(seed: str) -> None:
 def get_prng() -> AleaPRNG:
     """
     Get the current Alea PRNG instance.
-    
+
     Returns:
         AleaPRNG instance
     """

@@ -6,57 +6,65 @@ expansion patterns, and geographical preferences matching the original FMG.
 """
 
 from __future__ import annotations
-
-import math
-
-from dataclasses import dataclass, field
-
-from typing import Any, Dict, List, Optional, Set, Tuple
-
 import numpy as np
 import structlog
-
+import math
+from typing import Any, Dict, List, Optional, Set, Tuple
 from pydantic import BaseModel, Field, ConfigDict
-
-
 from .alea_prng import AleaPRNG
 from .biomes import BiomeClassifier
+
 
 logger = structlog.get_logger()
 
 
 class CultureOptions(BaseModel):
     """Culture generation options matching FMG's parameters."""
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    
+
     cultures_number: int = Field(default=12, description="Target number of cultures")
-    min_culture_cells: int = Field(default=10, description="Minimum cells for valid culture")
-    expansionism_modifier: float = Field(default=1.0, description="Global expansionism multiplier")
-    
+    min_culture_cells: int = Field(
+        default=10, description="Minimum cells for valid culture"
+    )
+    expansionism_modifier: float = Field(
+        default=1.0, description="Global expansionism multiplier"
+    )
+
     # Culture type distribution weights
-    generic_weight: float = Field(default=10.0, description="Weight for generic cultures")
+    generic_weight: float = Field(
+        default=10.0, description="Weight for generic cultures"
+    )
     naval_weight: float = Field(default=2.0, description="Weight for naval cultures")
-    nomadic_weight: float = Field(default=1.0, description="Weight for nomadic cultures")
-    hunting_weight: float = Field(default=1.0, description="Weight for hunting cultures")
-    highland_weight: float = Field(default=1.0, description="Weight for highland cultures")
+    nomadic_weight: float = Field(
+        default=1.0, description="Weight for nomadic cultures"
+    )
+    hunting_weight: float = Field(
+        default=1.0, description="Weight for hunting cultures"
+    )
+    highland_weight: float = Field(
+        default=1.0, description="Weight for highland cultures"
+    )
     lake_weight: float = Field(default=0.5, description="Weight for lake cultures")
     river_weight: float = Field(default=1.0, description="Weight for river cultures")
 
 
 class Culture(BaseModel):
     """Data structure for a cultural group."""
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    
+
     id: int = Field(description="Unique culture identifier")
     name: str = Field(description="Culture name")
     color: str = Field(description="Culture color in hex format")
     center: int = Field(description="Cell ID of culture center")
     type: str = Field(default="Generic", description="Culture type")
     expansionism: float = Field(default=1.0, description="Expansion tendency")
-    cells: Set[int] = Field(default_factory=set, description="Cells belonging to this culture")
+    cells: Set[int] = Field(
+        default_factory=set, description="Cells belonging to this culture"
+    )
     removed: bool = Field(default=False, description="Whether culture has been removed")
     name_base: int = Field(default=0, description="Index into name bases")
-
 
 
 class CultureGenerator:
@@ -68,7 +76,7 @@ class CultureGenerator:
         features: Any,
         biome_classifier: Optional[BiomeClassifier] = None,
         options: Optional[CultureOptions] = None,
-        prng: Optional[AleaPRNG] = None
+        prng: Optional[AleaPRNG] = None,
     ):
         """
         Initialize culture generator.
@@ -97,10 +105,26 @@ class CultureGenerator:
 
         # Color palette for cultures (from FMG)
         self.culture_colors = [
-            "#9e2a2b", "#e55934", "#f17c67", "#a53253", "#ce4a81",
-            "#d4a259", "#c9850d", "#e8b511", "#6ba9cb", "#4682b4",
-            "#0f8040", "#1a4b5c", "#8b4513", "#daa520", "#ff6347",
-            "#4169e1", "#32cd32", "#ff1493", "#00ced1", "#ffd700"
+            "#9e2a2b",
+            "#e55934",
+            "#f17c67",
+            "#a53253",
+            "#ce4a81",
+            "#d4a259",
+            "#c9850d",
+            "#e8b511",
+            "#6ba9cb",
+            "#4682b4",
+            "#0f8040",
+            "#1a4b5c",
+            "#8b4513",
+            "#daa520",
+            "#ff6347",
+            "#4169e1",
+            "#32cd32",
+            "#ff1493",
+            "#00ced1",
+            "#ffd700",
         ]
 
     def generate(self) -> Tuple[Dict[int, Culture], np.ndarray, np.ndarray, np.ndarray]:
@@ -137,7 +161,7 @@ class CultureGenerator:
             self.cultures,
             self.cell_cultures,
             self.cell_population,
-            self.cell_suitability
+            self.cell_suitability,
         )
 
     def _calculate_population(self) -> None:
@@ -151,11 +175,13 @@ class CultureGenerator:
 
         # Get flux statistics for normalization
         flux_values = (
-            self.graph.flux if hasattr(self.graph, 'flux')
+            self.graph.flux
+            if hasattr(self.graph, "flux")
             else np.zeros(len(self.graph.points))
         )
         confluence_values = (
-            self.graph.confluences if hasattr(self.graph, 'confluences')
+            self.graph.confluences
+            if hasattr(self.graph, "confluences")
             else np.zeros(len(self.graph.points))
         )
 
@@ -164,13 +190,13 @@ class CultureGenerator:
         fl_mean = np.median(land_flux[land_flux > 0]) if len(land_flux) > 0 else 0
         fl_max = (
             np.max(flux_values) + np.max(confluence_values)
-            if len(flux_values) > 0 else 1
+            if len(flux_values) > 0
+            else 1
         )
 
         # Area normalization
         area_mean = (
-            np.mean(self.graph.cell_areas)
-            if hasattr(self.graph, 'cell_areas') else 1.0
+            np.mean(self.graph.cell_areas) if hasattr(self.graph, "cell_areas") else 1.0
         )
 
         for i in range(len(self.graph.points)):
@@ -190,10 +216,9 @@ class CultureGenerator:
             if fl_mean > 0 and i < len(flux_values):
                 flux_score = (
                     self._normalize(
-                        flux_values[i] + confluence_values[i],
-                        fl_mean,
-                        fl_max
-                    ) * 250
+                        flux_values[i] + confluence_values[i], fl_mean, fl_max
+                    )
+                    * 250
                 )
                 s += flux_score
 
@@ -201,24 +226,27 @@ class CultureGenerator:
             s -= (self.graph.heights[i] - 50) / 5
 
             # Coastal and lake shores get bonuses
-            if hasattr(self.graph, 'cell_types') and i < len(self.graph.cell_types):
+            if hasattr(self.graph, "cell_types") and i < len(self.graph.cell_types):
                 if self.graph.cell_types[i] == 1:  # Coastline
-                    if hasattr(self.graph, 'river_ids') and self.graph.river_ids[i] > 0:
+                    if hasattr(self.graph, "river_ids") and self.graph.river_ids[i] > 0:
                         s += 15  # Estuary bonus
 
                     # Check if it's a lake shore
-                    if (hasattr(self.graph, 'cell_haven') and
-                        i < len(self.graph.cell_haven)):
+                    if hasattr(self.graph, "cell_haven") and i < len(
+                        self.graph.cell_haven
+                    ):
                         haven = self.graph.cell_haven[i]
                         if haven > 0 and haven < len(self.features.features):
                             feature = self.features.features[haven]
-                            if hasattr(feature, 'type') and feature.type == "lake":
-                                if (hasattr(feature, 'freshwater') and
-                                    feature.freshwater):
+                            if hasattr(feature, "type") and feature.type == "lake":
+                                if (
+                                    hasattr(feature, "freshwater")
+                                    and feature.freshwater
+                                ):
                                     s += 30  # Freshwater lake bonus
                                 else:
                                     s += 10  # Salt lake bonus
-                            elif hasattr(feature, 'type') and feature.type == "ocean":
+                            elif hasattr(feature, "type") and feature.type == "ocean":
                                 s += 25  # Ocean access bonus
                 else:
                     s -= 5  # Non-coastal penalty
@@ -227,7 +255,7 @@ class CultureGenerator:
             self.cell_suitability[i] = max(0, min(int(s), 32767))
 
             # Calculate population based on suitability and area
-            if hasattr(self.graph, 'cell_areas') and i < len(self.graph.cell_areas):
+            if hasattr(self.graph, "cell_areas") and i < len(self.graph.cell_areas):
                 area_factor = self.graph.cell_areas[i] / area_mean
             else:
                 area_factor = 1.0
@@ -252,8 +280,9 @@ class CultureGenerator:
         # Get all land cells with population potential (now pre-calculated)
         valid_cells = []
         for i in range(len(self.graph.points)):
-            if (self.graph.heights[i] >= 20 and  # Land cell
-                self.cell_population[i] > 0):  # Has population potential
+            if (
+                self.graph.heights[i] >= 20 and self.cell_population[i] > 0  # Land cell
+            ):  # Has population potential
                 valid_cells.append(i)
 
         if len(valid_cells) < self.options.cultures_number:
@@ -264,7 +293,7 @@ class CultureGenerator:
 
         # Calculate minimum distance between seeds
         map_size = math.sqrt(self.graph.graph_width * self.graph.graph_height)
-        min_distance = map_size / (self.options.cultures_number ** 0.7)
+        min_distance = map_size / (self.options.cultures_number**0.7)
 
         seeds: List[int] = []
         attempts = 0
@@ -316,7 +345,7 @@ class CultureGenerator:
                 name=f"Culture {culture_id}",  # Will be replaced with proper names
                 color=self.culture_colors[i % len(self.culture_colors)],
                 center=seed_cell,
-                expansionism=expansionism
+                expansionism=expansionism,
             )
 
             self.cultures[culture_id] = culture
@@ -356,8 +385,11 @@ class CultureGenerator:
             culture = self.cultures[culture_id]
 
             # Get neighbors
-            neighbors = (self.graph.cell_neighbors[current_cell]
-                        if current_cell < len(self.graph.cell_neighbors) else [])
+            neighbors = (
+                self.graph.cell_neighbors[current_cell]
+                if current_cell < len(self.graph.cell_neighbors)
+                else []
+            )
 
             for neighbor in neighbors:
                 # Skip if already assigned to a culture
@@ -386,10 +418,7 @@ class CultureGenerator:
                     heapq.heappush(heap, (total_cost, neighbor, culture_id))
 
     def _calculate_culture_expansion_cost(
-        self,
-        cell_id: int,
-        culture_id: int,
-        from_cell: int
+        self, cell_id: int, culture_id: int, from_cell: int
     ) -> float:
         """Calculate cost for culture to expand into a cell."""
         cost = 0.0
@@ -416,7 +445,7 @@ class CultureGenerator:
         cost += distance / 50  # Small distance penalty
 
         # Coastal preference for some expansions
-        if hasattr(self.graph, 'cell_types') and cell_id < len(self.graph.cell_types):
+        if hasattr(self.graph, "cell_types") and cell_id < len(self.graph.cell_types):
             if self.graph.cell_types[cell_id] == 1:  # Coastline
                 # Random cultures get coastal bonus
                 if self.prng.random() < 0.3:
@@ -450,24 +479,29 @@ class CultureGenerator:
                 highland_cells += 1
 
             # Coastal check
-            if (hasattr(self.graph, 'cell_types') and
-                cell_id < len(self.graph.cell_types) and
-                self.graph.cell_types[cell_id] == 1):
+            if (
+                hasattr(self.graph, "cell_types")
+                and cell_id < len(self.graph.cell_types)
+                and self.graph.cell_types[cell_id] == 1
+            ):
                 coastal_cells += 1
 
             # River check
-            if (hasattr(self.graph, 'river_ids') and
-                cell_id < len(self.graph.river_ids) and
-                self.graph.river_ids[cell_id] > 0):
+            if (
+                hasattr(self.graph, "river_ids")
+                and cell_id < len(self.graph.river_ids)
+                and self.graph.river_ids[cell_id] > 0
+            ):
                 river_cells += 1
 
             # Lake check
-            if (hasattr(self.graph, 'cell_haven') and
-                cell_id < len(self.graph.cell_haven)):
+            if hasattr(self.graph, "cell_haven") and cell_id < len(
+                self.graph.cell_haven
+            ):
                 haven = self.graph.cell_haven[cell_id]
                 if haven > 0 and haven < len(self.features.features):
                     feature = self.features.features[haven]
-                    if hasattr(feature, 'type') and feature.type == "lake":
+                    if hasattr(feature, "type") and feature.type == "lake":
                         lake_cells += 1
 
         # Calculate ratios
@@ -485,7 +519,7 @@ class CultureGenerator:
             return "Lake"
         elif river_ratio > 0.4:
             return "River"
-        elif (sum(self.cell_population[c] for c in culture.cells) / total_cells < 2):
+        elif sum(self.cell_population[c] for c in culture.cells) / total_cells < 2:
             return "Nomadic"
         else:
             return "Generic"
@@ -499,9 +533,9 @@ class CultureGenerator:
 
         # Define name base groups by cultural affinity
         continental_bases = [0, 2, 3]  # German, French, Italian (inland cultures)
-        maritime_bases = [1, 6, 7]    # English, Nordic, Greek (coastal cultures)
-        nomadic_bases = [4, 5]        # Spanish, Ruthenian (nomadic/trade cultures)
-        highland_bases = [0, 6, 8]    # German, Nordic, Roman (mountain cultures)
+        maritime_bases = [1, 6, 7]  # English, Nordic, Greek (coastal cultures)
+        nomadic_bases = [4, 5]  # Spanish, Ruthenian (nomadic/trade cultures)
+        highland_bases = [0, 6, 8]  # German, Nordic, Roman (mountain cultures)
 
         # Calculate map center for regional assignments
         center_x = self.graph.graph_width / 2
@@ -582,14 +616,19 @@ class CultureGenerator:
                 self.cell_cultures[cell_id] = 0  # Mark as unassigned
 
                 # Find best neighboring culture
-                neighbors = (self.graph.cell_neighbors[cell_id]
-                            if cell_id < len(self.graph.cell_neighbors) else [])
+                neighbors = (
+                    self.graph.cell_neighbors[cell_id]
+                    if cell_id < len(self.graph.cell_neighbors)
+                    else []
+                )
 
                 best_culture = 0
                 for neighbor in neighbors:
                     neighbor_culture = self.cell_cultures[neighbor]
-                    if (neighbor_culture > 0 and
-                        not self.cultures[neighbor_culture].removed):
+                    if (
+                        neighbor_culture > 0
+                        and not self.cultures[neighbor_culture].removed
+                    ):
                         best_culture = neighbor_culture
                         break
 
@@ -617,19 +656,21 @@ class CultureGenerator:
             Habitability score (0-100, where 100 is most habitable)
         """
         # Check if we have biome data available
-        if hasattr(self.graph, 'biomes') and hasattr(self.graph.biomes, 'cell_biomes'):
+        if hasattr(self.graph, "biomes") and hasattr(self.graph.biomes, "cell_biomes"):
             # Use actual biome classification
             if cell_id < len(self.graph.biomes.cell_biomes):
                 biome_id = self.graph.biomes.cell_biomes[cell_id]
                 biome_properties = self.biome_classifier.get_biome_properties(biome_id)
                 if biome_properties:
-                    return int(biome_properties.get('habitability', 50))
+                    return int(biome_properties.get("habitability", 50))
 
         # Fallback: Calculate biome from climate data if available
-        if (hasattr(self.graph, 'temperatures') and
-            hasattr(self.graph, 'precipitation') and
-            cell_id < len(self.graph.temperatures) and
-            cell_id < len(self.graph.precipitation)):
+        if (
+            hasattr(self.graph, "temperatures")
+            and hasattr(self.graph, "precipitation")
+            and cell_id < len(self.graph.temperatures)
+            and cell_id < len(self.graph.precipitation)
+        ):
 
             temperature = self.graph.temperatures[cell_id]
             precipitation = self.graph.precipitation[cell_id]
@@ -637,7 +678,7 @@ class CultureGenerator:
 
             # Calculate moisture (simplified from biome classifier)
             moisture = 4.0 + precipitation
-            if hasattr(self.graph, 'river_ids') and cell_id < len(self.graph.river_ids):
+            if hasattr(self.graph, "river_ids") and cell_id < len(self.graph.river_ids):
                 if self.graph.river_ids[cell_id] > 0:
                     moisture += 2.0  # River bonus
 
@@ -647,7 +688,7 @@ class CultureGenerator:
             )
             biome_properties = self.biome_classifier.get_biome_properties(biome_id)
             if biome_properties:
-                return int(biome_properties.get('habitability', 50))
+                return int(biome_properties.get("habitability", 50))
 
         # Final fallback: Enhanced height-based calculation with climate considerations
         height = self.graph.heights[cell_id]
@@ -661,8 +702,9 @@ class CultureGenerator:
             base_habitability = 80  # Lowlands - high habitability
 
         # Climate adjustments if available
-        if (hasattr(self.graph, 'temperatures') and
-            cell_id < len(self.graph.temperatures)):
+        if hasattr(self.graph, "temperatures") and cell_id < len(
+            self.graph.temperatures
+        ):
             temperature = self.graph.temperatures[cell_id]
 
             # Temperature penalties
@@ -675,8 +717,9 @@ class CultureGenerator:
             elif temperature > 30:
                 base_habitability = int(base_habitability * 0.6)  # Hot
         # Precipitation adjustments if available
-        if (hasattr(self.graph, 'precipitation') and
-            cell_id < len(self.graph.precipitation)):
+        if hasattr(self.graph, "precipitation") and cell_id < len(
+            self.graph.precipitation
+        ):
             precipitation = self.graph.precipitation[cell_id]
 
             # Very dry or very wet areas are less habitable
@@ -688,4 +731,3 @@ class CultureGenerator:
                 base_habitability = int(base_habitability * 0.7)  # Very wet conditions
 
         return int(max(0, min(100, base_habitability)))
-

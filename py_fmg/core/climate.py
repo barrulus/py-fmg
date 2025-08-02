@@ -8,11 +8,10 @@ This module implements:
 - Orographic effects and rain shadows
 """
 
-from dataclasses import dataclass
-from typing import List, Optional, Tuple
-
 import numpy as np
 import structlog
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
 
 logger = structlog.get_logger()
 
@@ -20,6 +19,7 @@ logger = structlog.get_logger()
 @dataclass
 class ClimateOptions:
     """Climate calculation options matching FMG's parameters."""
+
     # Temperature settings
     temperature_equator: float = 25.0  # °C at equator
     temperature_north_pole: float = -30.0  # °C at north pole
@@ -74,22 +74,30 @@ class ClimateOptions:
             # Precipitation modifiers based on atmospheric circulation cells
             # (Hadley, Ferrel, Polar cells affect precipitation patterns)
             self.latitude_precipitation_modifiers = [
-                4.0,    # 0-5°: Wet all year (ITCZ)
-                2.0, 2.0, # 5-20°: Wet summer, dry winter
-                1.0, 1.0, # 20-30°: Dry all year (descending air)
-                2.0, 2.0, # 30-40°: Wet winter, dry summer
-                2.0, 2.0, # 40-50°: Wet winter, dry summer
-                3.0, 3.0, # 50-60°: Wet all year
-                2.0, 2.0, # 60-70°: Wet summer, dry winter
-                1.0, 1.0, # 70-80°: Dry all year
-                1.0,      # 80-85°: Dry all year
-                0.5       # 85-90°: Very dry
+                4.0,  # 0-5°: Wet all year (ITCZ)
+                2.0,
+                2.0,  # 5-20°: Wet summer, dry winter
+                1.0,
+                1.0,  # 20-30°: Dry all year (descending air)
+                2.0,
+                2.0,  # 30-40°: Wet winter, dry summer
+                2.0,
+                2.0,  # 40-50°: Wet winter, dry summer
+                3.0,
+                3.0,  # 50-60°: Wet all year
+                2.0,
+                2.0,  # 60-70°: Wet summer, dry winter
+                1.0,
+                1.0,  # 70-80°: Dry all year
+                1.0,  # 80-85°: Dry all year
+                0.5,  # 85-90°: Very dry
             ]
 
 
 @dataclass
 class MapCoordinates:
     """Map latitude boundaries."""
+
     lat_n: float = 90  # Northern latitude boundary
     lat_s: float = -90  # Southern latitude boundary
 
@@ -102,11 +110,15 @@ class MapCoordinates:
 class Climate:
     """Handles temperature and precipitation calculations."""
 
-    def __init__(self, graph, options: Optional[ClimateOptions] = None,
-                 map_coords: Optional[MapCoordinates] = None):
+    def __init__(
+        self,
+        graph,
+        options: Optional[ClimateOptions] = None,
+        map_coords: Optional[MapCoordinates] = None,
+    ):
         """
         Initialize climate calculator.
-        
+
         Args:
             graph: VoronoiGraph with heights populated
             options: Climate calculation options
@@ -123,7 +135,7 @@ class Climate:
     def calculate_temperatures(self):
         """
         Calculate temperature for each cell based on latitude and altitude.
-        
+
         Port of FMG's calculateTemperatures() from main.js:897-943
         """
         logger.info("Calculating temperatures")
@@ -136,12 +148,20 @@ class Climate:
         tropical_gradient = self.options.tropical_gradient
 
         # Calculate temperature at tropic boundaries
-        temp_north_tropic = self.options.temperature_equator - tropics[0] * tropical_gradient
-        temp_south_tropic = self.options.temperature_equator + tropics[1] * tropical_gradient
+        temp_north_tropic = (
+            self.options.temperature_equator - tropics[0] * tropical_gradient
+        )
+        temp_south_tropic = (
+            self.options.temperature_equator + tropics[1] * tropical_gradient
+        )
 
         # Calculate gradients for temperate zones
-        northern_gradient = (temp_north_tropic - self.options.temperature_north_pole) / (90 - tropics[0])
-        southern_gradient = (temp_south_tropic - self.options.temperature_south_pole) / (90 + tropics[1])
+        northern_gradient = (
+            temp_north_tropic - self.options.temperature_north_pole
+        ) / (90 - tropics[0])
+        southern_gradient = (
+            temp_south_tropic - self.options.temperature_south_pole
+        ) / (90 + tropics[1])
 
         # Process cells row by row for efficiency
         cells_x = self.graph.cells_x
@@ -150,19 +170,27 @@ class Climate:
         for row_start in range(0, n_cells, cells_x):
             # Calculate latitude for this row
             y = self.graph.points[row_start][1]
-            row_latitude = self.map_coords.lat_n - (y / graph_height) * self.map_coords.lat_t
+            row_latitude = (
+                self.map_coords.lat_n - (y / graph_height) * self.map_coords.lat_t
+            )
 
             # Sea level temperature for this latitude
             temp_sea_level = self._calculate_sea_level_temp(
-                row_latitude, tropics, tropical_gradient,
-                temp_north_tropic, temp_south_tropic,
-                northern_gradient, southern_gradient
+                row_latitude,
+                tropics,
+                tropical_gradient,
+                temp_north_tropic,
+                temp_south_tropic,
+                northern_gradient,
+                southern_gradient,
             )
 
             # Apply to all cells in row
             for cell_id in range(row_start, min(row_start + cells_x, n_cells)):
                 # Calculate altitude temperature drop
-                altitude_drop = self._get_altitude_temperature_drop(self.graph.heights[cell_id])
+                altitude_drop = self._get_altitude_temperature_drop(
+                    self.graph.heights[cell_id]
+                )
 
                 # Final temperature (clamped to int8 range)
                 temp = temp_sea_level - altitude_drop
@@ -171,10 +199,16 @@ class Climate:
         # Store on graph
         self.graph.temperatures = self.temperatures
 
-    def _calculate_sea_level_temp(self, latitude: float, tropics: List[int],
-                                  tropical_gradient: float, temp_north_tropic: float,
-                                  temp_south_tropic: float, northern_gradient: float,
-                                  southern_gradient: float) -> float:
+    def _calculate_sea_level_temp(
+        self,
+        latitude: float,
+        tropics: List[int],
+        tropical_gradient: float,
+        temp_north_tropic: float,
+        temp_south_tropic: float,
+        northern_gradient: float,
+        southern_gradient: float,
+    ) -> float:
         """Calculate sea level temperature for given latitude."""
         # Check if in tropical zone
         is_tropical = latitude <= tropics[0] and latitude >= tropics[1]
@@ -203,7 +237,7 @@ class Climate:
     def generate_precipitation(self):
         """
         Generate precipitation using wind patterns and orographic effects.
-        
+
         Port of FMG's generatePrecipitation() from main.js:946-1106
         """
         logger.info("Generating precipitation")
@@ -212,7 +246,7 @@ class Climate:
         self.precipitation = np.zeros(n_cells, dtype=np.uint8)
 
         # Handle packed graphs that may not have cells_x/cells_y
-        if hasattr(self.graph, 'cells_x') and hasattr(self.graph, 'cells_y'):
+        if hasattr(self.graph, "cells_x") and hasattr(self.graph, "cells_y"):
             cells_x = self.graph.cells_x
             cells_y = self.graph.cells_y
         else:
@@ -264,25 +298,47 @@ class Climate:
 
         # Pass winds across the map using configurable base precipitation
         if westerly:
-            self._pass_wind(westerly, self.options.base_precipitation_west * modifier, 1, cells_x)
+            self._pass_wind(
+                westerly, self.options.base_precipitation_west * modifier, 1, cells_x
+            )
         if easterly:
-            self._pass_wind(easterly, self.options.base_precipitation_west * modifier, -1, cells_x)
+            self._pass_wind(
+                easterly, self.options.base_precipitation_west * modifier, -1, cells_x
+            )
 
         # Vertical winds
         vert_total = southerly + northerly
         if northerly and vert_total > 0:
             band_n = int((abs(self.map_coords.lat_n) - 1) / 5)
             band_n = min(band_n, len(latitude_modifier) - 1)
-            lat_mod_n = latitude_modifier[band_n] if self.map_coords.lat_t <= 60 else np.mean(latitude_modifier)
-            max_prec_n = (northerly / vert_total) * self.options.base_precipitation_vertical * modifier * lat_mod_n
+            lat_mod_n = (
+                latitude_modifier[band_n]
+                if self.map_coords.lat_t <= 60
+                else np.mean(latitude_modifier)
+            )
+            max_prec_n = (
+                (northerly / vert_total)
+                * self.options.base_precipitation_vertical
+                * modifier
+                * lat_mod_n
+            )
             north_range = list(range(0, min(cells_x, n_cells)))  # Bound check
             self._pass_wind(north_range, max_prec_n, cells_x, cells_y)
 
         if southerly and vert_total > 0:
             band_s = int((abs(self.map_coords.lat_s) - 1) / 5)
             band_s = min(band_s, len(latitude_modifier) - 1)
-            lat_mod_s = latitude_modifier[band_s] if self.map_coords.lat_t <= 60 else np.mean(latitude_modifier)
-            max_prec_s = (southerly / vert_total) * self.options.base_precipitation_vertical * modifier * lat_mod_s
+            lat_mod_s = (
+                latitude_modifier[band_s]
+                if self.map_coords.lat_t <= 60
+                else np.mean(latitude_modifier)
+            )
+            max_prec_s = (
+                (southerly / vert_total)
+                * self.options.base_precipitation_vertical
+                * modifier
+                * lat_mod_s
+            )
             south_start = max(0, n_cells - cells_x)  # Bound check
             south_range = list(range(south_start, n_cells))
             self._pass_wind(south_range, max_prec_s, -cells_x, cells_y)
@@ -304,7 +360,7 @@ class Climate:
     def _pass_wind(self, source: List, max_prec: float, next_step: int, steps: int):
         """
         Simulate wind passing across terrain, depositing precipitation.
-        
+
         Args:
             source: Starting cells for wind
             max_prec: Maximum precipitation amount
@@ -332,7 +388,10 @@ class Climate:
                     break
 
                 # Skip permafrost using configurable threshold
-                if hasattr(self.graph, 'temperatures') and self.temperatures[current] < self.options.permafrost_threshold:
+                if (
+                    hasattr(self.graph, "temperatures")
+                    and self.temperatures[current] < self.options.permafrost_threshold
+                ):
                     current += next_step
                     continue
 
@@ -342,53 +401,98 @@ class Climate:
                     if 0 <= next_cell < len(self.graph.points):
                         if self.graph.heights[next_cell] >= 20:
                             # Coastal precipitation using configurable range
-                            precip = max(humidity / np.random.randint(*self.options.coastal_precip_range), 1)
-                            self.precipitation[next_cell] += int(min(precip, 255 - self.precipitation[next_cell]))
+                            precip = max(
+                                humidity
+                                / np.random.randint(*self.options.coastal_precip_range),
+                                1,
+                            )
+                            self.precipitation[next_cell] += int(
+                                min(precip, 255 - self.precipitation[next_cell])
+                            )
                         else:
                             # Wind gains humidity over water using configurable values
-                            humidity = min(humidity + self.options.water_humidity_gain * self.options.precipitation_modifier, max_prec)
-                            water_precip = int(self.options.water_precipitation * self.options.precipitation_modifier)
-                            self.precipitation[current] += min(water_precip, 255 - self.precipitation[current])
+                            humidity = min(
+                                humidity
+                                + self.options.water_humidity_gain
+                                * self.options.precipitation_modifier,
+                                max_prec,
+                            )
+                            water_precip = int(
+                                self.options.water_precipitation
+                                * self.options.precipitation_modifier
+                            )
+                            self.precipitation[current] += min(
+                                water_precip, 255 - self.precipitation[current]
+                            )
                     current += next_step
                     continue
 
                 # Land cell
                 next_cell = current + next_step
                 if 0 <= next_cell < len(self.graph.points):
-                    is_passable = self.graph.heights[next_cell] <= max_passable_elevation
+                    is_passable = (
+                        self.graph.heights[next_cell] <= max_passable_elevation
+                    )
 
                     if is_passable:
-                        precipitation = self._get_precipitation(humidity, current, next_step)
+                        precipitation = self._get_precipitation(
+                            humidity, current, next_step
+                        )
                     else:
-                        precipitation = humidity  # All humidity drops at impassable terrain
+                        precipitation = (
+                            humidity  # All humidity drops at impassable terrain
+                        )
 
-                    self.precipitation[current] += int(min(precipitation, 255 - self.precipitation[current]))
+                    self.precipitation[current] += int(
+                        min(precipitation, 255 - self.precipitation[current])
+                    )
 
                     # Update humidity using configurable evaporation threshold
-                    evaporation = 1 if precipitation > self.options.evaporation_threshold else 0
-                    humidity = max(0, humidity - precipitation + evaporation) if is_passable else 0
+                    evaporation = (
+                        1 if precipitation > self.options.evaporation_threshold else 0
+                    )
+                    humidity = (
+                        max(0, humidity - precipitation + evaporation)
+                        if is_passable
+                        else 0
+                    )
                 else:
                     # Boundary - dump remaining humidity
-                    self.precipitation[current] += int(min(humidity, 255 - self.precipitation[current]))
+                    self.precipitation[current] += int(
+                        min(humidity, 255 - self.precipitation[current])
+                    )
                     humidity = 0
 
                 current += next_step
 
-    def _get_precipitation(self, humidity: float, cell_idx: int, next_step: int) -> float:
+    def _get_precipitation(
+        self, humidity: float, cell_idx: int, next_step: int
+    ) -> float:
         """
         Calculate precipitation based on humidity and terrain.
-        
+
         Includes orographic effects (increased precipitation on windward slopes).
         """
         # Normal precipitation loss using configurable divisor
-        normal_loss = max(humidity / (self.options.precipitation_base_divisor * self.options.precipitation_modifier), 1)
+        normal_loss = max(
+            humidity
+            / (
+                self.options.precipitation_base_divisor
+                * self.options.precipitation_modifier
+            ),
+            1,
+        )
 
         # Orographic effect
         next_idx = cell_idx + next_step
         if 0 <= next_idx < len(self.graph.points):
             # Use int to avoid uint8 overflow
-            height_diff = max(int(self.graph.heights[next_idx]) - int(self.graph.heights[cell_idx]), 0)
-            terrain_mod = (self.graph.heights[next_idx] / self.options.terrain_mod_threshold) ** 2  # Configurable mountain threshold
+            height_diff = max(
+                int(self.graph.heights[next_idx]) - int(self.graph.heights[cell_idx]), 0
+            )
+            terrain_mod = (
+                self.graph.heights[next_idx] / self.options.terrain_mod_threshold
+            ) ** 2  # Configurable mountain threshold
             orographic_precip = height_diff * terrain_mod
         else:
             orographic_precip = 0

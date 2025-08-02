@@ -1,6 +1,5 @@
 """Configuration management."""
 
-
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -28,7 +27,6 @@ class Settings(BaseSettings):
     db_password: str = Field(default="password", description="Database password")
     db_port: str = Field(default="5432", description="Database port")  # ⚠️ int default
 
-
     @property
     def database_url(self) -> str:
         """Build database URL from components."""
@@ -41,15 +39,17 @@ class Settings(BaseSettings):
     # Generation
     max_map_size: int = Field(default=2048, description="Maximum map size")
 
-    generation_timeout: int = Field(default=300, description="Generation timeout in seconds")
+    generation_timeout: int = Field(
+        default=300, description="Generation timeout in seconds"
+    )
 
     # Logging
     log_level: str = Field(default="INFO", description="Log level")
 
     class Config:
-        env_file = ".env"           # used by Pydantic
+        env_file = ".env"  # used by Pydantic
         env_file_encoding = "utf-8"
+
 
 # Instantiate once, to be imported throughout app
 settings = Settings()
-

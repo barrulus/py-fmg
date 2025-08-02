@@ -159,5 +159,3 @@ The project has achieved a major milestone with a complete implementation of FMG
 - `README.md` - Basic project overview and setup
 - `CHANGELOG.md` - Detailed change history
 - `docs/API.md` - API endpoint documentation
-- `docs/THEBIGREPORT.md` - Technical implementation details
-- `docs/VORONOI.md` - Voronoi generation documentation

@@ -31,7 +31,9 @@ class Database:
         )
 
         # Create session factory
-        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+        self.SessionLocal = sessionmaker(
+            autocommit=False, autoflush=False, bind=self.engine
+        )
 
         # Create tables
         self.create_tables()
@@ -43,8 +45,9 @@ class Database:
         try:
             # Ensure PostGIS extension exists
             from sqlalchemy import text
+
             with self.engine.connect() as conn:
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis")) 
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
 
                 conn.commit()
 

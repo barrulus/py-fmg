@@ -1,6 +1,5 @@
 """FastAPI main application."""
 
-
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -32,9 +31,8 @@ from ..core.biomes import BiomeClassifier, BiomeOptions
 
 # Set up standard logging
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    handlers=[logging.StreamHandler()]
+    level=logging.INFO, format="%(message)s", handlers=[logging.StreamHandler()]
+)
 
 from ..core.heightmap_generator import HeightmapConfig, HeightmapGenerator
 from ..core.hydrology import Hydrology
@@ -131,7 +129,7 @@ class MapSummary(BaseModel):
 
 class BiomeStatistics(BaseModel):
     """Biome distribution statistics for a map."""
-    
+
     biome_name: str
     cell_count: int
     percentage: float
@@ -141,7 +139,7 @@ class BiomeStatistics(BaseModel):
 
 class RiverInfo(BaseModel):
     """Information about a river."""
-    
+
     id: int
     length: float
     flow: float
@@ -152,7 +150,7 @@ class RiverInfo(BaseModel):
 
 class MapStatistics(BaseModel):
     """Comprehensive statistics about a generated map."""
-    
+
     map_id: str
     total_cells: int
     land_cells: int
@@ -167,7 +165,7 @@ class MapStatistics(BaseModel):
 
 class ClimateData(BaseModel):
     """Climate data for a specific cell or region."""
-    
+
     cell_index: int
     temperature: int
     precipitation: int
@@ -177,7 +175,7 @@ class ClimateData(BaseModel):
 
 class CultureInfo(BaseModel):
     """Information about a culture."""
-    
+
     id: int
     name: str
     color: str
@@ -190,7 +188,7 @@ class CultureInfo(BaseModel):
 
 class ReligionInfo(BaseModel):
     """Information about a religion."""
-    
+
     id: int
     name: str
     color: str
@@ -206,7 +204,7 @@ class ReligionInfo(BaseModel):
 
 class SettlementInfo(BaseModel):
     """Information about a settlement."""
-    
+
     id: int
     name: str
     type: str
@@ -387,38 +385,89 @@ async def get_map_statistics(map_id: str):
     """Get comprehensive statistics for a map."""
     with db.get_session() as session:
         map_obj = session.query(Map).filter(Map.id == map_id).first()
-        
+
         if not map_obj:
             raise HTTPException(status_code=404, detail="Map not found")
-        
+
         # For now, return mock statistics since we don't store the graph data yet
         # In a full implementation, this would load the graph data and calculate real statistics
-        
+
         mock_biome_stats = [
-            BiomeStatistics(biome_name="Ocean", cell_count=3000, percentage=30.0, avg_temperature=15.0, avg_precipitation=100.0),
-            BiomeStatistics(biome_name="Temperate Forest", cell_count=2500, percentage=25.0, avg_temperature=12.0, avg_precipitation=120.0),
-            BiomeStatistics(biome_name="Grassland", cell_count=2000, percentage=20.0, avg_temperature=18.0, avg_precipitation=80.0),
-            BiomeStatistics(biome_name="Desert", cell_count=1500, percentage=15.0, avg_temperature=25.0, avg_precipitation=20.0),
-            BiomeStatistics(biome_name="Mountains", cell_count=1000, percentage=10.0, avg_temperature=5.0, avg_precipitation=150.0),
+            BiomeStatistics(
+                biome_name="Ocean",
+                cell_count=3000,
+                percentage=30.0,
+                avg_temperature=15.0,
+                avg_precipitation=100.0,
+            ),
+            BiomeStatistics(
+                biome_name="Temperate Forest",
+                cell_count=2500,
+                percentage=25.0,
+                avg_temperature=12.0,
+                avg_precipitation=120.0,
+            ),
+            BiomeStatistics(
+                biome_name="Grassland",
+                cell_count=2000,
+                percentage=20.0,
+                avg_temperature=18.0,
+                avg_precipitation=80.0,
+            ),
+            BiomeStatistics(
+                biome_name="Desert",
+                cell_count=1500,
+                percentage=15.0,
+                avg_temperature=25.0,
+                avg_precipitation=20.0,
+            ),
+            BiomeStatistics(
+                biome_name="Mountains",
+                cell_count=1000,
+                percentage=10.0,
+                avg_temperature=5.0,
+                avg_precipitation=150.0,
+            ),
         ]
-        
+
         mock_rivers = [
-            RiverInfo(id=1, length=250.5, flow=150.0, source_cell=100, mouth_cell=5000, cell_count=45),
-            RiverInfo(id=2, length=180.2, flow=80.0, source_cell=200, mouth_cell=4800, cell_count=32),
-            RiverInfo(id=3, length=120.8, flow=45.0, source_cell=300, mouth_cell=4500, cell_count=22),
+            RiverInfo(
+                id=1,
+                length=250.5,
+                flow=150.0,
+                source_cell=100,
+                mouth_cell=5000,
+                cell_count=45,
+            ),
+            RiverInfo(
+                id=2,
+                length=180.2,
+                flow=80.0,
+                source_cell=200,
+                mouth_cell=4800,
+                cell_count=32,
+            ),
+            RiverInfo(
+                id=3,
+                length=120.8,
+                flow=45.0,
+                source_cell=300,
+                mouth_cell=4500,
+                cell_count=22,
+            ),
         ]
-        
+
         return MapStatistics(
             map_id=str(map_obj.id),
             total_cells=map_obj.cells_count,
             land_cells=int(map_obj.cells_count * 0.7),  # Mock: 70% land
             water_cells=int(map_obj.cells_count * 0.3),  # Mock: 30% water
             rivers_count=15,  # Mock
-            lakes_count=5,    # Mock
+            lakes_count=5,  # Mock
             biome_distribution=mock_biome_stats,
             major_rivers=mock_rivers,
             temperature_range=(-10.0, 35.0),  # Mock temperature range
-            precipitation_range=(10.0, 200.0)  # Mock precipitation range
+            precipitation_range=(10.0, 200.0),  # Mock precipitation range
         )
 
 
@@ -427,22 +476,22 @@ async def get_cell_climate(map_id: str, cell_index: int):
     """Get climate data for a specific cell."""
     with db.get_session() as session:
         map_obj = session.query(Map).filter(Map.id == map_id).first()
-        
+
         if not map_obj:
             raise HTTPException(status_code=404, detail="Map not found")
-        
+
         if cell_index < 0 or cell_index >= map_obj.cells_count:
             raise HTTPException(status_code=400, detail="Invalid cell index")
-        
+
         # For now, return mock data
         # In a full implementation, this would load the actual graph data
-        
+
         return ClimateData(
             cell_index=cell_index,
             temperature=15,  # Mock temperature
             precipitation=100,  # Mock precipitation
             biome="Temperate Forest",  # Mock biome
-            height=45  # Mock height
+            height=45,  # Mock height
         )
 
 
@@ -451,19 +500,49 @@ async def get_map_biomes(map_id: str):
     """Get biome distribution for a map."""
     with db.get_session() as session:
         map_obj = session.query(Map).filter(Map.id == map_id).first()
-        
+
         if not map_obj:
             raise HTTPException(status_code=404, detail="Map not found")
-        
+
         # For now, return mock biome data
         # In a full implementation, this would load the actual biome data from the graph
-        
+
         return [
-            BiomeStatistics(biome_name="Ocean", cell_count=3000, percentage=30.0, avg_temperature=15.0, avg_precipitation=100.0),
-            BiomeStatistics(biome_name="Temperate Deciduous Forest", cell_count=2500, percentage=25.0, avg_temperature=12.0, avg_precipitation=120.0),
-            BiomeStatistics(biome_name="Temperate Grassland", cell_count=2000, percentage=20.0, avg_temperature=18.0, avg_precipitation=80.0),
-            BiomeStatistics(biome_name="Desert", cell_count=1500, percentage=15.0, avg_temperature=25.0, avg_precipitation=20.0),
-            BiomeStatistics(biome_name="Alpine", cell_count=1000, percentage=10.0, avg_temperature=5.0, avg_precipitation=150.0),
+            BiomeStatistics(
+                biome_name="Ocean",
+                cell_count=3000,
+                percentage=30.0,
+                avg_temperature=15.0,
+                avg_precipitation=100.0,
+            ),
+            BiomeStatistics(
+                biome_name="Temperate Deciduous Forest",
+                cell_count=2500,
+                percentage=25.0,
+                avg_temperature=12.0,
+                avg_precipitation=120.0,
+            ),
+            BiomeStatistics(
+                biome_name="Temperate Grassland",
+                cell_count=2000,
+                percentage=20.0,
+                avg_temperature=18.0,
+                avg_precipitation=80.0,
+            ),
+            BiomeStatistics(
+                biome_name="Desert",
+                cell_count=1500,
+                percentage=15.0,
+                avg_temperature=25.0,
+                avg_precipitation=20.0,
+            ),
+            BiomeStatistics(
+                biome_name="Alpine",
+                cell_count=1000,
+                percentage=10.0,
+                avg_temperature=5.0,
+                avg_precipitation=150.0,
+            ),
         ]
 
 
@@ -472,19 +551,54 @@ async def get_map_rivers(map_id: str):
     """Get river information for a map."""
     with db.get_session() as session:
         map_obj = session.query(Map).filter(Map.id == map_id).first()
-        
+
         if not map_obj:
             raise HTTPException(status_code=404, detail="Map not found")
-        
+
         # For now, return mock river data
         # In a full implementation, this would load the actual river data from the graph
-        
+
         return [
-            RiverInfo(id=1, length=250.5, flow=150.0, source_cell=100, mouth_cell=5000, cell_count=45),
-            RiverInfo(id=2, length=180.2, flow=80.0, source_cell=200, mouth_cell=4800, cell_count=32),
-            RiverInfo(id=3, length=120.8, flow=45.0, source_cell=300, mouth_cell=4500, cell_count=22),
-            RiverInfo(id=4, length=95.3, flow=35.0, source_cell=400, mouth_cell=4200, cell_count=18),
-            RiverInfo(id=5, length=75.1, flow=25.0, source_cell=500, mouth_cell=4000, cell_count=15),
+            RiverInfo(
+                id=1,
+                length=250.5,
+                flow=150.0,
+                source_cell=100,
+                mouth_cell=5000,
+                cell_count=45,
+            ),
+            RiverInfo(
+                id=2,
+                length=180.2,
+                flow=80.0,
+                source_cell=200,
+                mouth_cell=4800,
+                cell_count=32,
+            ),
+            RiverInfo(
+                id=3,
+                length=120.8,
+                flow=45.0,
+                source_cell=300,
+                mouth_cell=4500,
+                cell_count=22,
+            ),
+            RiverInfo(
+                id=4,
+                length=95.3,
+                flow=35.0,
+                source_cell=400,
+                mouth_cell=4200,
+                cell_count=18,
+            ),
+            RiverInfo(
+                id=5,
+                length=75.1,
+                flow=25.0,
+                source_cell=500,
+                mouth_cell=4000,
+                cell_count=15,
+            ),
         ]
 
 
@@ -493,19 +607,64 @@ async def get_map_cultures(map_id: str):
     """Get culture information for a map."""
     with db.get_session() as session:
         map_obj = session.query(Map).filter(Map.id == map_id).first()
-        
+
         if not map_obj:
             raise HTTPException(status_code=404, detail="Map not found")
-        
+
         # For now, return mock culture data
         # In a full implementation, this would load the actual culture data from the database
-        
+
         return [
-            CultureInfo(id=1, name="Northmen", color="#9e2a2b", type="Highland", area_km2=15000.0, population=250000, expansionism=1.2, center_cell=1500),
-            CultureInfo(id=2, name="Islanders", color="#4682b4", type="Naval", area_km2=8000.0, population=180000, expansionism=1.5, center_cell=2800),
-            CultureInfo(id=3, name="Desert Riders", color="#daa520", type="Nomadic", area_km2=20000.0, population=120000, expansionism=0.8, center_cell=3200),
-            CultureInfo(id=4, name="Forest Folk", color="#0f8040", type="Generic", area_km2=12000.0, population=200000, expansionism=1.0, center_cell=1800),
-            CultureInfo(id=5, name="River People", color="#6ba9cb", type="River", area_km2=9000.0, population=160000, expansionism=1.1, center_cell=2200),
+            CultureInfo(
+                id=1,
+                name="Northmen",
+                color="#9e2a2b",
+                type="Highland",
+                area_km2=15000.0,
+                population=250000,
+                expansionism=1.2,
+                center_cell=1500,
+            ),
+            CultureInfo(
+                id=2,
+                name="Islanders",
+                color="#4682b4",
+                type="Naval",
+                area_km2=8000.0,
+                population=180000,
+                expansionism=1.5,
+                center_cell=2800,
+            ),
+            CultureInfo(
+                id=3,
+                name="Desert Riders",
+                color="#daa520",
+                type="Nomadic",
+                area_km2=20000.0,
+                population=120000,
+                expansionism=0.8,
+                center_cell=3200,
+            ),
+            CultureInfo(
+                id=4,
+                name="Forest Folk",
+                color="#0f8040",
+                type="Generic",
+                area_km2=12000.0,
+                population=200000,
+                expansionism=1.0,
+                center_cell=1800,
+            ),
+            CultureInfo(
+                id=5,
+                name="River People",
+                color="#6ba9cb",
+                type="River",
+                area_km2=9000.0,
+                population=160000,
+                expansionism=1.1,
+                center_cell=2200,
+            ),
         ]
 
 
@@ -514,18 +673,66 @@ async def get_map_religions(map_id: str):
     """Get religion information for a map."""
     with db.get_session() as session:
         map_obj = session.query(Map).filter(Map.id == map_id).first()
-        
+
         if not map_obj:
             raise HTTPException(status_code=404, detail="Map not found")
-        
+
         # For now, return mock religion data
         # In a full implementation, this would load the actual religion data from the database
-        
+
         return [
-            ReligionInfo(id=1, name="The Old Gods", color="#8b4513", type="Folk", form="Shamanism", deity=None, expansion="culture", expansionism=0.5, area_km2=15000.0, rural_population=200000.0, urban_population=50000.0),
-            ReligionInfo(id=2, name="Church of the Sun", color="#ffd700", type="Organized", form="Monotheism", deity="Solaris", expansion="global", expansionism=2.0, area_km2=25000.0, rural_population=300000.0, urban_population=120000.0),
-            ReligionInfo(id=3, name="Order of the Deep", color="#1a4b5c", type="Organized", form="Polytheism", deity="Thalassa", expansion="state", expansionism=1.5, area_km2=12000.0, rural_population=150000.0, urban_population=80000.0),
-            ReligionInfo(id=4, name="Wind Walkers", color="#87ceeb", type="Folk", form="Animism", deity=None, expansion="culture", expansionism=0.8, area_km2=18000.0, rural_population=180000.0, urban_population=40000.0),
+            ReligionInfo(
+                id=1,
+                name="The Old Gods",
+                color="#8b4513",
+                type="Folk",
+                form="Shamanism",
+                deity=None,
+                expansion="culture",
+                expansionism=0.5,
+                area_km2=15000.0,
+                rural_population=200000.0,
+                urban_population=50000.0,
+            ),
+            ReligionInfo(
+                id=2,
+                name="Church of the Sun",
+                color="#ffd700",
+                type="Organized",
+                form="Monotheism",
+                deity="Solaris",
+                expansion="global",
+                expansionism=2.0,
+                area_km2=25000.0,
+                rural_population=300000.0,
+                urban_population=120000.0,
+            ),
+            ReligionInfo(
+                id=3,
+                name="Order of the Deep",
+                color="#1a4b5c",
+                type="Organized",
+                form="Polytheism",
+                deity="Thalassa",
+                expansion="state",
+                expansionism=1.5,
+                area_km2=12000.0,
+                rural_population=150000.0,
+                urban_population=80000.0,
+            ),
+            ReligionInfo(
+                id=4,
+                name="Wind Walkers",
+                color="#87ceeb",
+                type="Folk",
+                form="Animism",
+                deity=None,
+                expansion="culture",
+                expansionism=0.8,
+                area_km2=18000.0,
+                rural_population=180000.0,
+                urban_population=40000.0,
+            ),
         ]
 
 
@@ -534,19 +741,69 @@ async def get_map_settlements(map_id: str):
     """Get settlement information for a map."""
     with db.get_session() as session:
         map_obj = session.query(Map).filter(Map.id == map_id).first()
-        
+
         if not map_obj:
             raise HTTPException(status_code=404, detail="Map not found")
-        
+
         # For now, return mock settlement data
         # In a full implementation, this would load the actual settlement data from the database
-        
+
         return [
-            SettlementInfo(id=1, name="Ironhold", type="capital", population=45000, is_capital=True, is_port=False, culture_name="Northmen", state_name="Northern Kingdom", religion_name="The Old Gods"),
-            SettlementInfo(id=2, name="Seahaven", type="city", population=28000, is_capital=False, is_port=True, culture_name="Islanders", state_name="Maritime Republic", religion_name="Order of the Deep"),
-            SettlementInfo(id=3, name="Goldspire", type="capital", population=38000, is_capital=True, is_port=False, culture_name="Desert Riders", state_name="Desert Emirates", religion_name="Church of the Sun"),
-            SettlementInfo(id=4, name="Greenwood", type="town", population=12000, is_capital=False, is_port=False, culture_name="Forest Folk", state_name="Woodland Alliance", religion_name="The Old Gods"),
-            SettlementInfo(id=5, name="Rivermouth", type="city", population=22000, is_capital=False, is_port=True, culture_name="River People", state_name="River Confederacy", religion_name="Wind Walkers"),
+            SettlementInfo(
+                id=1,
+                name="Ironhold",
+                type="capital",
+                population=45000,
+                is_capital=True,
+                is_port=False,
+                culture_name="Northmen",
+                state_name="Northern Kingdom",
+                religion_name="The Old Gods",
+            ),
+            SettlementInfo(
+                id=2,
+                name="Seahaven",
+                type="city",
+                population=28000,
+                is_capital=False,
+                is_port=True,
+                culture_name="Islanders",
+                state_name="Maritime Republic",
+                religion_name="Order of the Deep",
+            ),
+            SettlementInfo(
+                id=3,
+                name="Goldspire",
+                type="capital",
+                population=38000,
+                is_capital=True,
+                is_port=False,
+                culture_name="Desert Riders",
+                state_name="Desert Emirates",
+                religion_name="Church of the Sun",
+            ),
+            SettlementInfo(
+                id=4,
+                name="Greenwood",
+                type="town",
+                population=12000,
+                is_capital=False,
+                is_port=False,
+                culture_name="Forest Folk",
+                state_name="Woodland Alliance",
+                religion_name="The Old Gods",
+            ),
+            SettlementInfo(
+                id=5,
+                name="Rivermouth",
+                type="city",
+                population=22000,
+                is_capital=False,
+                is_port=True,
+                culture_name="River People",
+                state_name="River Confederacy",
+                religion_name="Wind Walkers",
+            ),
         ]
 
 
@@ -570,13 +827,16 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
             job.status = "running"
             job.started_at = datetime.utcnow()
             session.commit()
-            grid_seed = job.grid_seed
-            map_seed = job.map_seed
+            seed = job.seed
 
         # Stage 1: Generate Voronoi graph
         logger.info("Generating Voronoi graph", job_id=job_id)
-        config = GridConfig(width=request.width, height=request.height, cells_desired=request.cells_desired)
-        voronoi_graph = generate_voronoi_graph(config, grid_seed)
+        config = GridConfig(
+            width=request.width,
+            height=request.height,
+            cells_desired=request.cells_desired,
+        )
+        voronoi_graph = generate_voronoi_graph(config, seed)
 
         with db.get_session() as session:
             job = session.query(GenerationJob).get(job_id)
@@ -595,7 +855,7 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
             spacing=voronoi_graph.spacing,
         )
         heightmap_gen = HeightmapGenerator(heightmap_config, voronoi_graph)
-        heights = heightmap_gen.from_template(request.template_name, map_seed)
+        heights = heightmap_gen.from_template(request.template_name, seed)
         voronoi_graph.heights = heights
 
         with db.get_session() as session:
@@ -633,7 +893,11 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
 
         # Stage 6: Climate
         logger.info("Generating climate", job_id=job_id)
-        climate = Climate(packed_graph, options=ClimateOptions(), map_coords=MapCoordinates(lat_n=90, lat_s=-90))
+        climate = Climate(
+            packed_graph,
+            options=ClimateOptions(),
+            map_coords=MapCoordinates(lat_n=90, lat_s=-90),
+        )
         climate.calculate_temperatures()
         climate.generate_precipitation()
         with db.get_session() as session:
@@ -663,17 +927,15 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
         logger.info("Saving map", job_id=job_id)
         with db.get_session() as session:
             job = session.query(GenerationJob).get(job_id)
-            map_name = request.map_name or f"Map {job.grid_seed}"
+            map_name = request.map_name or f"Map {job.seed}"
 
             map_obj = Map(
                 name=map_name,
                 seed=job.seed,
-                grid_seed=job.grid_seed,
-                map_seed=job.map_seed,
                 width=job.width,
                 height=job.height,
                 cells_count=len(packed_graph.points),
-                generation_time_seconds=1.0  # TODO: track actual time
+                generation_time_seconds=1.0,  # TODO: track actual time
             )
             session.add(map_obj)
             session.flush()

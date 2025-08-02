@@ -9,7 +9,6 @@ This module handles:
 - Distance field calculation
 """
 
-import math
 import numpy as np
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
