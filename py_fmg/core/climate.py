@@ -12,7 +12,12 @@ import numpy as np
 import structlog
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
-
+from .voronoi_graph import (
+    VoronoiGraph,
+    build_cell_connectivity,
+    build_cell_vertices,
+    build_vertex_connectivity,
+)
 logger = structlog.get_logger()
 
 
@@ -112,7 +117,7 @@ class Climate:
 
     def __init__(
         self,
-        graph,
+        graph:VoronoiGraph,
         options: Optional[ClimateOptions] = None,
         map_coords: Optional[MapCoordinates] = None,
     ):

@@ -12,7 +12,12 @@ import numpy as np
 from typing import Dict, Optional, Set
 from dataclasses import dataclass
 from enum import IntEnum
-
+from .voronoi_graph import (
+    VoronoiGraph,
+    build_cell_connectivity,
+    build_cell_vertices,
+    build_vertex_connectivity,
+)
 
 logger = structlog.get_logger()
 
@@ -88,7 +93,7 @@ class BiomeRegion:
 class BiomeClassifier:
     """Handles biome classification based on climate and geography."""
 
-    def __init__(self, graph, options: Optional[BiomeOptions] = None):
+    def __init__(self, graph:VoronoiGraph, options: Optional[BiomeOptions] = None):
         """
         Initialize biome classifier.
 

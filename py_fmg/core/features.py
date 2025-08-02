@@ -12,6 +12,12 @@ This module handles:
 import numpy as np
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
+from .voronoi_graph import (
+    VoronoiGraph,
+    build_cell_connectivity,
+    build_cell_vertices,
+    build_vertex_connectivity,
+)
 
 # Feature type constants
 DEEPER_LAND = 3
@@ -41,7 +47,7 @@ class Feature:
 class Features:
     """Handles geographic feature detection and markup."""
 
-    def __init__(self, graph, seed: Optional[str] = None):
+    def __init__(self, graph:VoronoiGraph, seed: Optional[str] = None):
         """
         Initialize Features with a VoronoiGraph.
 

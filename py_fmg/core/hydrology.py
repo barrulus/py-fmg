@@ -15,7 +15,12 @@ import math
 from typing import Dict, List, Tuple, Optional, Set
 from dataclasses import dataclass, field
 from collections import deque
-
+from .voronoi_graph import (
+    VoronoiGraph,
+    build_cell_connectivity,
+    build_cell_vertices,
+    build_vertex_connectivity,
+)
 
 logger = structlog.get_logger()
 
@@ -87,7 +92,7 @@ class RiverData:
 class Hydrology:
     """Handles water flow simulation and river generation."""
 
-    def __init__(self, graph, features=None, options: Optional[HydrologyOptions] = None):
+    def __init__(self, graph:VoronoiGraph, features=None, options: Optional[HydrologyOptions] = None):
         """
         Initialize hydrology system.
 
@@ -96,6 +101,7 @@ class Hydrology:
             features: Optional Features object for advanced lake handling
             options: Hydrology calculation options
         """
+
         self.graph = graph
         self.features = features  # Optional features for lake handling
         self.options = options or HydrologyOptions()
@@ -872,7 +878,7 @@ class Hydrology:
         for cell_id in land_cells:
             # Step 1: Add precipitation flux to this cell
             if (
-                hasattr(self.climate, "precipitation")
+                hasattr(self.graph.climate, "precipitation")
                 and hasattr(self.graph, "grid_indices")
                 and self.graph.grid_indices is not None
             ):

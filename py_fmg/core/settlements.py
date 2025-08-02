@@ -26,6 +26,12 @@ from pydantic import BaseModel, Field, ConfigDict
 from sklearn.neighbors import KDTree
 
 from .name_generator import NameGenerator
+from .voronoi_graph import (
+    VoronoiGraph,
+    build_cell_connectivity,
+    build_cell_vertices,
+    build_vertex_connectivity,
+)
 
 logger = structlog.get_logger()
 
@@ -140,7 +146,7 @@ class Settlements:
 
     def __init__(
         self,
-        graph,
+        graph:VoronoiGraph,
         features,
         cultures,
         biomes,
@@ -236,8 +242,7 @@ class Settlements:
         logger.warning(
             "rank_cells() called but population is now calculated in cultures module"
         )
-        return
-
+        
         # Get flux statistics for normalization
         flux_values = (
             self.graph.flux
@@ -333,6 +338,7 @@ class Settlements:
                 area_factor = 1.0
 
             self.cell_population[i] = max(0, s * area_factor / 100)
+            return 
 
     def _normalize(self, value: float, mean: float, max_val: float) -> float:
         """Normalize value using FMG's normalization formula."""

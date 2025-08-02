@@ -13,7 +13,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from pydantic import BaseModel, Field, ConfigDict
 from .alea_prng import AleaPRNG
 from .biomes import BiomeClassifier
-
+from .voronoi_graph import (
+    VoronoiGraph,
+    build_cell_connectivity,
+    build_cell_vertices,
+    build_vertex_connectivity,
+)
 
 logger = structlog.get_logger()
 
@@ -72,7 +77,7 @@ class CultureGenerator:
 
     def __init__(
         self,
-        graph: Any,
+        graph: VoronoiGraph,
         features: Any,
         biome_classifier: Optional[BiomeClassifier] = None,
         options: Optional[CultureOptions] = None,
