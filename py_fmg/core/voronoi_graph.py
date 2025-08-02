@@ -6,7 +6,6 @@ from typing import Dict, List, Tuple, NamedTuple, Optional
 from dataclasses import dataclass, field
 import structlog
 from .alea_prng import AleaPRNG
-
 logger = structlog.get_logger()
 
 
@@ -64,6 +63,23 @@ class VoronoiGraph:
     border_cells: Optional[np.ndarray] = field(
         default=None
     )  # cells.b - border cell flags
+
+    climate: Optional[any] = None
+    confluences: Optional[any] = None
+    cell_population: Optional[any] = None
+    cell_types: Optional[any] = None 
+    river_ids: Optional[any] = None
+    feature_ids: Optional[any] = None 
+    cell_areas: Optional[any] = None 
+    water_flux: Optional[any] = None 
+    temperatures: Optional[any] = None 
+    biome_regions: Optional[any] = None 
+    precipitation: Optional[any] = None 
+    flow_directions: Optional[any] = None 
+    filled_heights: Optional[any] = None 
+    rivers: Optional[any] = None 
+    lakes: Optional[any] = None 
+    flux: Optional[any] = None 
 
     def should_regenerate(self, config: GridConfig, seed: str) -> bool:
         """Check if grid needs to be regenerated based on new parameters.
