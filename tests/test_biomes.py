@@ -394,12 +394,9 @@ def test_biome_options_defaults():
     assert options.alpine_height_threshold == 70
     assert options.glacier_temperature_threshold == -10
 
-=======
-"""
-Tests for biome classification system
 
-Tests biome assignment algorithm against FMG reference implementation.
-"""
+def test_biome_assignment_algorithm():
+    """Tests biome assignment algorithm against FMG reference implementation."""
 
 import pytest
 import numpy as np

@@ -330,16 +330,9 @@ def test_hydrology_options_defaults():
     assert options.meander_factor == 0.3
     assert options.evaporation_rate == 0.1
 
-=======
-"""
-Unit tests for the hydrology system.
 
-Tests cover:
-- Height alteration for water flow
-- Depression resolution algorithm
-- Water drainage simulation
-- River formation and properties
-"""
+def test_river_formation_and_properties():
+    """Test river formation and properties."""
 
 import pytest
 import numpy as np

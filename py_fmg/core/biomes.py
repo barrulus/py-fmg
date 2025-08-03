@@ -104,6 +104,9 @@ class BiomeClassifier:
         self.graph = graph
         self.options = options or BiomeOptions()
 
+        # Ensure required tile events are initialized
+        self._ensure_tile_events()
+
         # Classification results
         self.biomes = None  # Biome type for each cell
         self.biome_regions = []  # List of BiomeRegion objects
@@ -111,6 +114,42 @@ class BiomeClassifier:
         # Temperature/precipitation classification matrix
         # Based on FMG's biome matrix (temperature bands vs precipitation bands)
         self._init_biome_matrix()
+
+    # TODO some sort of decision algorithm based on given infos -> collapse way
+    def get_biome_properties(self, biome_id):
+        return biome_id
+    
+    def get_biome_id(self, biome_type:BiomeType, temperature:int, height:float, ver:bool):
+        return 
+
+    def _ensure_tile_events(self):
+        """Ensure required tile events are initialized in the graph."""
+        required_events = ['biome_regions', 'biomes']
+        
+        for event in required_events:
+            if not self.graph.has_tile_data(event):
+                # Initialize with appropriate default values
+                if event == 'biome_regions':
+                    self.graph.set_tile_data(event, [])
+                    logger.info(f"Initialized tile event '{event}' with default list")
+                elif event == 'biomes':
+                    default_value = np.zeros(len(self.graph.cell_neighbors), dtype=int)
+                    self.graph.set_tile_data(event, default_value)
+                    logger.info(f"Initialized tile event '{event}' with default array")
+
+    def _validate_prerequisites(self):
+        """Validate that required data exists before biome classification."""
+        if not self.graph.heights is not None or self.graph.heights is None:
+            raise ValueError("Heights must be calculated before biome classification")
+        
+        # Check for climate data (temperatures and precipitation)
+        if not self.graph.has_tile_data('temperatures'):
+            logger.warning("No temperature data found, using default values")
+        
+        if not self.graph.has_tile_data('precipitation'):
+            logger.warning("No precipitation data found, using default values")
+        
+        logger.info("Biome classification prerequisites validated")
 
     def _init_biome_matrix(self):
         """
@@ -214,15 +253,15 @@ class BiomeClassifier:
         if self.graph.heights[cell_idx] < 20:
             return BiomeType.OCEAN
 
-        # Get climate data
+        # Get climate data using tile_events system
         temperature = (
             self.graph.temperatures[cell_idx]
-            if hasattr(self.graph, "temperatures")
+            if self.graph.temperatures is not None and cell_idx < len(self.graph.temperatures)
             else 15
         )
         precipitation = (
             self.graph.precipitation[cell_idx]
-            if hasattr(self.graph, "precipitation")
+            if self.graph.precipitation is not None and cell_idx < len(self.graph.precipitation)
             else 100
         )
         height = self.graph.heights[cell_idx]
@@ -281,7 +320,7 @@ class BiomeClassifier:
     def _apply_coastal_influences(self):
         """Apply coastal influences on biomes."""
         if (
-            not hasattr(self.graph, "distance_field")
+            not self.graph.distance_field is not None
             or self.graph.distance_field is None
         ):
             return
@@ -305,7 +344,7 @@ class BiomeClassifier:
 
     def _apply_river_influences(self):
         """Apply river influences on biomes."""
-        if not hasattr(self.graph, "rivers"):
+        if not self.graph.rivers is not None:
             return
 
         river_cells = set()
@@ -336,7 +375,7 @@ class BiomeClassifier:
 
     def _form_wetlands(self):
         """Form wetlands in appropriate locations."""
-        if not hasattr(self.graph, "water_flux"):
+        if not self.graph.water_flux is not None:
             return
 
         # Find areas with high water accumulation but not rivers
@@ -344,7 +383,7 @@ class BiomeClassifier:
             if (
                 self.graph.heights[i] >= 20  # Land
                 and self.biomes[i] != BiomeType.RIVER
-                and hasattr(self.graph, "water_flux")
+                and self.graph.water_flux is not None
             ):
 
                 # High water flux indicates potential wetland
@@ -354,7 +393,7 @@ class BiomeClassifier:
                 if water_flux > max_flux * self.options.wetland_threshold:
                     # Check if it's not already a major river
                     is_major_river = False
-                    if hasattr(self.graph, "rivers"):
+                    if self.graph.rivers is not None:
                         for river in self.graph.rivers:
                             if i in river.cells and river.flow > 100:
                                 is_major_river = True
@@ -366,7 +405,7 @@ class BiomeClassifier:
     def _form_mangroves(self):
         """Form mangroves in tropical coastal areas."""
         if (
-            not hasattr(self.graph, "distance_field")
+            not self.graph.distance_field is not None
             or self.graph.distance_field is None
         ):
             return

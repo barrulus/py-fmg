@@ -95,7 +95,7 @@ class CultureGenerator:
         """
         self.graph = graph
         self.features = features
-        self.biome_classifier = biome_classifier or BiomeClassifier()
+        self.biome_classifier = biome_classifier or BiomeClassifier(self.graph) 
         self.options = options or CultureOptions()
         self.prng = prng or AleaPRNG("cultures")
 
@@ -181,12 +181,12 @@ class CultureGenerator:
         # Get flux statistics for normalization
         flux_values = (
             self.graph.flux
-            if hasattr(self.graph, "flux")
+            if self.graph.flux is not None
             else np.zeros(len(self.graph.points))
         )
         confluence_values = (
             self.graph.confluences
-            if hasattr(self.graph, "confluences")
+            if self.graph.confluences is not None
             else np.zeros(len(self.graph.points))
         )
 
@@ -201,7 +201,7 @@ class CultureGenerator:
 
         # Area normalization
         area_mean = (
-            np.mean(self.graph.cell_areas) if hasattr(self.graph, "cell_areas") else 1.0
+            np.mean(self.graph.cell_areas) if self.graph.cell_areas is not None else 1.0
         )
 
         for i in range(len(self.graph.points)):
@@ -231,13 +231,13 @@ class CultureGenerator:
             s -= (self.graph.heights[i] - 50) / 5
 
             # Coastal and lake shores get bonuses
-            if hasattr(self.graph, "cell_types") and i < len(self.graph.cell_types):
+            if self.graph.cell_types is not None and i < len(self.graph.cell_types):
                 if self.graph.cell_types[i] == 1:  # Coastline
-                    if hasattr(self.graph, "river_ids") and self.graph.river_ids[i] > 0:
+                    if self.graph.river_ids is not None and self.graph.river_ids[i] > 0:
                         s += 15  # Estuary bonus
 
                     # Check if it's a lake shore
-                    if hasattr(self.graph, "cell_haven") and i < len(
+                    if self.graph.cell_haven is not None and i < len(
                         self.graph.cell_haven
                     ):
                         haven = self.graph.cell_haven[i]
@@ -260,7 +260,7 @@ class CultureGenerator:
             self.cell_suitability[i] = max(0, min(int(s), 32767))
 
             # Calculate population based on suitability and area
-            if hasattr(self.graph, "cell_areas") and i < len(self.graph.cell_areas):
+            if self.graph.cell_areas is not None and i < len(self.graph.cell_areas):
                 area_factor = self.graph.cell_areas[i] / area_mean
             else:
                 area_factor = 1.0
@@ -450,7 +450,7 @@ class CultureGenerator:
         cost += distance / 50  # Small distance penalty
 
         # Coastal preference for some expansions
-        if hasattr(self.graph, "cell_types") and cell_id < len(self.graph.cell_types):
+        if self.graph.cell_types is not None and cell_id < len(self.graph.cell_types):
             if self.graph.cell_types[cell_id] == 1:  # Coastline
                 # Random cultures get coastal bonus
                 if self.prng.random() < 0.3:
@@ -485,7 +485,7 @@ class CultureGenerator:
 
             # Coastal check
             if (
-                hasattr(self.graph, "cell_types")
+                self.graph.cell_types is not None
                 and cell_id < len(self.graph.cell_types)
                 and self.graph.cell_types[cell_id] == 1
             ):
@@ -493,14 +493,14 @@ class CultureGenerator:
 
             # River check
             if (
-                hasattr(self.graph, "river_ids")
+                self.graph.river_ids is not None
                 and cell_id < len(self.graph.river_ids)
                 and self.graph.river_ids[cell_id] > 0
             ):
                 river_cells += 1
 
             # Lake check
-            if hasattr(self.graph, "cell_haven") and cell_id < len(
+            if self.graph.cell_haven is not None and cell_id < len(
                 self.graph.cell_haven
             ):
                 haven = self.graph.cell_haven[cell_id]
@@ -661,18 +661,16 @@ class CultureGenerator:
             Habitability score (0-100, where 100 is most habitable)
         """
         # Check if we have biome data available
-        if hasattr(self.graph, "biomes") and hasattr(self.graph.biomes, "cell_biomes"):
+        if self.graph.biomes is not None and hasattr(self.graph.biomes, "cell_biomes"):
             # Use actual biome classification
-            if cell_id < len(self.graph.biomes.cell_biomes):
-                biome_id = self.graph.biomes.cell_biomes[cell_id]
-                biome_properties = self.biome_classifier.get_biome_properties(biome_id)
-                if biome_properties:
-                    return int(biome_properties.get("habitability", 50))
+            if cell_id < len(self.graph.biomes):
+                biome_id = self.graph.biomes[cell_id]
+                return int(self.biome_classifier.get_biome_habitability(biome_id))
 
         # Fallback: Calculate biome from climate data if available
         if (
-            hasattr(self.graph, "temperatures")
-            and hasattr(self.graph, "precipitation")
+            self.graph.temperatures is not None
+            and self.graph.precipitation is not None
             and cell_id < len(self.graph.temperatures)
             and cell_id < len(self.graph.precipitation)
         ):
@@ -683,17 +681,9 @@ class CultureGenerator:
 
             # Calculate moisture (simplified from biome classifier)
             moisture = 4.0 + precipitation
-            if hasattr(self.graph, "river_ids") and cell_id < len(self.graph.river_ids):
+            if self.graph.river_ids is not None and cell_id < len(self.graph.river_ids):
                 if self.graph.river_ids[cell_id] > 0:
                     moisture += 2.0  # River bonus
-
-            # Determine biome using temperature-moisture classification
-            biome_id = self.biome_classifier.get_biome_id(
-                moisture, temperature, height, False
-            )
-            biome_properties = self.biome_classifier.get_biome_properties(biome_id)
-            if biome_properties:
-                return int(biome_properties.get("habitability", 50))
 
         # Final fallback: Enhanced height-based calculation with climate considerations
         height = self.graph.heights[cell_id]
@@ -707,7 +697,7 @@ class CultureGenerator:
             base_habitability = 80  # Lowlands - high habitability
 
         # Climate adjustments if available
-        if hasattr(self.graph, "temperatures") and cell_id < len(
+        if self.graph.temperatures is not None and cell_id < len(
             self.graph.temperatures
         ):
             temperature = self.graph.temperatures[cell_id]
@@ -722,7 +712,7 @@ class CultureGenerator:
             elif temperature > 30:
                 base_habitability = int(base_habitability * 0.6)  # Hot
         # Precipitation adjustments if available
-        if hasattr(self.graph, "precipitation") and cell_id < len(
+        if self.graph.precipitation is not None and cell_id < len(
             self.graph.precipitation
         ):
             precipitation = self.graph.precipitation[cell_id]

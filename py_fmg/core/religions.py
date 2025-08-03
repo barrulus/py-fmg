@@ -305,9 +305,9 @@ class ReligionGenerator:
 
                 # Get population from settlements or culture suitability
                 population = 0.0
-                if hasattr(self.graph, "cell_population"):
+                if self.graph.cell_population is not None:
                     population = self.graph.cell_population[cell_id]
-                elif hasattr(self.graph, "cell_suitability"):
+                elif self.graph.cell_suitability is not None:
                     population = self.graph.cell_suitability[cell_id]
 
                 if population > 5:  # Minimum population threshold
@@ -414,7 +414,7 @@ class ReligionGenerator:
         self, queue: List, cell_id: int, religion_id: int, base_cost: float
     ) -> None:
         """Add neighboring cells to expansion queue."""
-        if not hasattr(self.graph, "neighbors") or cell_id >= len(self.graph.neighbors):
+        if not self.graph.neighbors is not None or cell_id >= len(self.graph.neighbors):
             return
 
         religion = self.religions[religion_id]
@@ -528,7 +528,7 @@ class ReligionGenerator:
             religion.urban_population = 0.0
 
             for cell_id in religion.cells:
-                if hasattr(self.graph, "cell_population") and cell_id < len(
+                if self.graph.cell_population is not None and cell_id < len(
                     self.graph.cell_population
                 ):
                     population = self.graph.cell_population[cell_id]

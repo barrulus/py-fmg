@@ -133,9 +133,37 @@ class Climate:
         self.options = options or ClimateOptions()
         self.map_coords = map_coords or MapCoordinates()
 
+        # Ensure required tile events are initialized
+        self._ensure_tile_events()
+
         # Temperature and precipitation arrays
         self.temperatures = None
         self.precipitation = None
+
+    def _ensure_tile_events(self):
+        """Ensure required tile events are initialized in the graph."""
+        required_events = ['temperatures', 'precipitation', 'climate']
+        
+        for event in required_events:
+            if not self.graph.has_tile_data(event):
+                # Initialize with appropriate default values
+                if event in ['temperatures', 'precipitation']:
+                    default_value = np.zeros(len(self.graph.cell_neighbors))
+                    self.graph.set_tile_data(event, default_value)
+                    logger.info(f"Initialized tile event '{event}' with default array")
+                elif event == 'climate':
+                    self.graph.set_tile_data(event, {})
+                    logger.info(f"Initialized tile event '{event}' with default dict")
+
+    def _validate_prerequisites(self):
+        """Validate that required data exists before climate calculation."""
+        if not hasattr(self.graph, 'heights') or self.graph.heights is None:
+            raise ValueError("Heights must be calculated before climate generation")
+        
+        if len(self.graph.heights) != len(self.graph.cell_neighbors):
+            raise ValueError("Heights array size mismatch with cell count")
+        
+        logger.info("Climate prerequisites validated successfully")
 
     def calculate_temperatures(self):
         """
@@ -143,6 +171,9 @@ class Climate:
 
         Port of FMG's calculateTemperatures() from main.js:897-943
         """
+        # Validate prerequisites before calculation
+        self._validate_prerequisites()
+        
         logger.info("Calculating temperatures")
 
         n_cells = len(self.graph.points)
@@ -201,8 +232,9 @@ class Climate:
                 temp = temp_sea_level - altitude_drop
                 self.temperatures[cell_id] = int(np.clip(temp, -128, 127))
 
-        # Store on graph
-        self.graph.temperatures = self.temperatures
+        # Store on graph using secure tile events system
+        self.graph.set_tile_data('temperatures', self.temperatures)
+        logger.info(f"Temperature calculation completed for {n_cells} cells")
 
     def _calculate_sea_level_temp(
         self,

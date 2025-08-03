@@ -106,6 +106,9 @@ class Hydrology:
         self.features = features  # Optional features for lake handling
         self.options = options or HydrologyOptions()
 
+        # Ensure required tile events are initialized
+        self._ensure_tile_events()
+
         # Water flow arrays
         self.water_flux = None  # Water accumulation at each cell
         self.flow_directions = None  # Flow direction for each cell
@@ -115,6 +118,31 @@ class Hydrology:
         self.rivers = []  # List of River objects
         self.lakes = []  # List of Lake objects
 
+    def _ensure_tile_events(self):
+        """Ensure required tile events are initialized in the graph."""
+        required_events = ['water_flux', 'flow_directions', 'filled_heights', 'rivers', 'lakes']
+        
+        for event in required_events:
+            if not self.graph.has_tile_data(event):
+                # Initialize with appropriate default values
+                if event in ['water_flux', 'flow_directions', 'filled_heights']:
+                    default_value = np.zeros(len(self.graph.cell_neighbors))
+                    self.graph.set_tile_data(event, default_value)
+                    logger.info(f"Initialized tile event '{event}' with default array")
+                elif event in ['rivers', 'lakes']:
+                    self.graph.set_tile_data(event, [])
+                    logger.info(f"Initialized tile event '{event}' with default list")
+
+    def _validate_prerequisites(self):
+        """Validate that required data exists before hydrology calculation."""
+        if not hasattr(self.graph, 'heights') or self.graph.heights is None:
+            raise ValueError("Heights must be calculated before hydrology generation")
+        
+        if len(self.graph.heights) != len(self.graph.cell_neighbors):
+            raise ValueError("Heights array size mismatch with cell count")
+        
+        logger.info("Hydrology prerequisites validated successfully")
+
     def fill_depressions(self):
         """
         Fill depressions in the heightmap to ensure proper drainage.
@@ -122,6 +150,9 @@ class Hydrology:
         This implements a priority queue-based depression filling algorithm
         similar to FMG's approach.
         """
+        # Validate prerequisites before calculation
+        self._validate_prerequisites()
+        
         logger.info("Filling depressions")
 
         n_cells = len(self.graph.points)
@@ -210,6 +241,7 @@ class Hydrology:
 
         # Initialize with precipitation
         if hasattr(self.graph, "precipitation"):
+            # set_tile_data
             self.water_flux = self.graph.precipitation.astype(np.float32).copy()
         else:
             # Default precipitation if not available
