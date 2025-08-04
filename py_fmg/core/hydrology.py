@@ -15,7 +15,12 @@ import math
 from typing import Dict, List, Tuple, Optional, Set
 from dataclasses import dataclass, field
 from collections import deque
-
+from .voronoi_graph import (
+    VoronoiGraph,
+    build_cell_connectivity,
+    build_cell_vertices,
+    build_vertex_connectivity,
+)
 
 logger = structlog.get_logger()
 
@@ -87,16 +92,22 @@ class RiverData:
 class Hydrology:
     """Handles water flow simulation and river generation."""
 
-    def __init__(self, graph, options: Optional[HydrologyOptions] = None):
+    def __init__(self, graph:VoronoiGraph, features=None, options: Optional[HydrologyOptions] = None):
         """
         Initialize hydrology system.
 
         Args:
             graph: VoronoiGraph with heights and precipitation populated
+            features: Optional Features object for advanced lake handling
             options: Hydrology calculation options
         """
+
         self.graph = graph
+        self.features = features  # Optional features for lake handling
         self.options = options or HydrologyOptions()
+
+        # Ensure required tile events are initialized
+        self._ensure_tile_events()
 
         # Water flow arrays
         self.water_flux = None  # Water accumulation at each cell
@@ -107,6 +118,31 @@ class Hydrology:
         self.rivers = []  # List of River objects
         self.lakes = []  # List of Lake objects
 
+    def _ensure_tile_events(self):
+        """Ensure required tile events are initialized in the graph."""
+        required_events = ['water_flux', 'flow_directions', 'filled_heights', 'rivers', 'lakes']
+        
+        for event in required_events:
+            if not self.graph.has_tile_data(event):
+                # Initialize with appropriate default values
+                if event in ['water_flux', 'flow_directions', 'filled_heights']:
+                    default_value = np.zeros(len(self.graph.cell_neighbors))
+                    self.graph.set_tile_data(event, default_value)
+                    logger.info(f"Initialized tile event '{event}' with default array")
+                elif event in ['rivers', 'lakes']:
+                    self.graph.set_tile_data(event, [])
+                    logger.info(f"Initialized tile event '{event}' with default list")
+
+    def _validate_prerequisites(self):
+        """Validate that required data exists before hydrology calculation."""
+        if not hasattr(self.graph, 'heights') or self.graph.heights is None:
+            raise ValueError("Heights must be calculated before hydrology generation")
+        
+        if len(self.graph.heights) != len(self.graph.cell_neighbors):
+            raise ValueError("Heights array size mismatch with cell count")
+        
+        logger.info("Hydrology prerequisites validated successfully")
+
     def fill_depressions(self):
         """
         Fill depressions in the heightmap to ensure proper drainage.
@@ -114,6 +150,9 @@ class Hydrology:
         This implements a priority queue-based depression filling algorithm
         similar to FMG's approach.
         """
+        # Validate prerequisites before calculation
+        self._validate_prerequisites()
+        
         logger.info("Filling depressions")
 
         n_cells = len(self.graph.points)
@@ -202,6 +241,7 @@ class Hydrology:
 
         # Initialize with precipitation
         if hasattr(self.graph, "precipitation"):
+            # set_tile_data
             self.water_flux = self.graph.precipitation.astype(np.float32).copy()
         else:
             # Default precipitation if not available
@@ -581,26 +621,11 @@ class Hydrology:
         check_lake_max_iteration = int(max_iterations * 0.85)
         elevate_lake_max_iteration = int(max_iterations * 0.75)
 
-        # Helper function to get height of lake or cell (matches FMG's height function)
+        # Helper function to get height of lake or cell (simplified version)
         def height(i: int) -> float:
-            if (
-                hasattr(self.graph, "feature_ids")
-                and self.graph.feature_ids is not None
-                and i < len(self.graph.feature_ids)
-            ):
-                feature_id = self.graph.feature_ids[i]
-                if feature_id > 0 and hasattr(self.graph, "features") and feature_id in self.graph.features:
-                    feature = self.graph.features[feature_id]
-                    if (
-                        feature
-                        and hasattr(feature, "id")
-                        and feature.id == feature_id
-                        ):
-                            if (
-                                hasattr(feature, "height")
-                                and feature.height is not None
-                            ):
-                                return feature.height
+            # For now, just return the basic height from the graph
+            # In the future, this could be extended to handle lake features
+            # if they are properly integrated into the graph structure
             return self.graph.heights[i]
 
         # Get lakes and land cells
@@ -885,7 +910,7 @@ class Hydrology:
         for cell_id in land_cells:
             # Step 1: Add precipitation flux to this cell
             if (
-                hasattr(self.climate, "precipitation")
+                hasattr(self.graph.climate, "precipitation")
                 and hasattr(self.graph, "grid_indices")
                 and self.graph.grid_indices is not None
             ):

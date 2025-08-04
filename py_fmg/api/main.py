@@ -3,42 +3,32 @@
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Optional, Tuple
-from typing import Optional
+from typing import List, Optional, Tuple, Dict
 import structlog
 import logging
-
 import uuid
 from datetime import datetime
-from typing import Dict, Optional
-
 import numpy as np
-import structlog
-from fastapi import BackgroundTasks, FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 
 from ..config import settings
-from ..core.biomes import BiomeClassifier
+from ..core.biomes import BiomeClassifier, BiomeOptions
 from ..core.cell_packing import regraph
-from ..core.climate import Climate
+from ..core.climate import Climate, ClimateOptions, MapCoordinates
 from ..core.cultures import CultureGenerator
 from ..core.features import Features
-
-from ..core.climate import Climate, ClimateOptions, MapCoordinates
+from ..core.heightmap_generator import HeightmapConfig, HeightmapGenerator
 from ..core.hydrology import Hydrology, HydrologyOptions
-from ..core.biomes import BiomeClassifier, BiomeOptions
+from ..core.name_generator import NameGenerator
+from ..core.settlements import Settlements
+from ..core.voronoi_graph import GridConfig, generate_voronoi_graph
+from .editor_simple import router as editor_router
+from .visualizer import router as visualizer_router
 
 # Set up standard logging
 logging.basicConfig(
     level=logging.INFO, format="%(message)s", handlers=[logging.StreamHandler()]
 )
 
-from ..core.heightmap_generator import HeightmapConfig, HeightmapGenerator
-from ..core.hydrology import Hydrology
-from ..core.name_generator import NameGenerator
-from ..core.settlements import Settlements
-from ..core.voronoi_graph import GridConfig, generate_voronoi_graph
 from ..db.connection import db
 from ..db.models import (
     GenerationJob,
@@ -85,6 +75,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(editor_router)
+app.include_router(visualizer_router)
 
 
 # Request/Response models
@@ -893,13 +887,22 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
 
         # Stage 6: Climate
         logger.info("Generating climate", job_id=job_id)
-        climate = Climate(
-            packed_graph,
-            options=ClimateOptions(),
-            map_coords=MapCoordinates(lat_n=90, lat_s=-90),
-        )
-        climate.calculate_temperatures()
-        climate.generate_precipitation()
+        try:
+            climate = Climate(
+                packed_graph,
+                options=ClimateOptions(),
+                map_coords=MapCoordinates(lat_n=90, lat_s=-90),
+            )
+            climate.calculate_temperatures()
+            climate.generate_precipitation()
+            logger.info("Climate generation completed successfully", job_id=job_id)
+        except Exception as e:
+            logger.error("Climate generation failed, using fallback", job_id=job_id, error=str(e))
+            # Fallback: Initialize basic climate data
+            n_cells = len(packed_graph.cell_neighbors)
+            packed_graph.set_tile_data('temperatures', np.full(n_cells, 15, dtype=np.int8))
+            packed_graph.set_tile_data('precipitation', np.full(n_cells, 100, dtype=np.int16))
+        
         with db.get_session() as session:
             job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 60
@@ -907,8 +910,19 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
 
         # Stage 7: Hydrology
         logger.info("Generating hydrology", job_id=job_id)
-        hydrology = Hydrology(packed_graph, options=HydrologyOptions())
-        hydrology.run_full_simulation()
+        try:
+            hydrology = Hydrology(packed_graph, options=HydrologyOptions())
+            hydrology.run_full_simulation()
+            logger.info("Hydrology generation completed successfully", job_id=job_id)
+        except Exception as e:
+            logger.error("Hydrology generation failed, using fallback", job_id=job_id, error=str(e))
+            # Fallback: Initialize basic hydrology data
+            n_cells = len(packed_graph.cell_neighbors)
+            packed_graph.set_tile_data('water_flux', np.zeros(n_cells))
+            packed_graph.set_tile_data('flow_directions', np.zeros(n_cells))
+            packed_graph.set_tile_data('rivers', [])
+            packed_graph.set_tile_data('lakes', [])
+        
         with db.get_session() as session:
             job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 70
@@ -916,11 +930,36 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
 
         # Stage 8: Biomes
         logger.info("Generating biomes", job_id=job_id)
-        biomes = BiomeClassifier(packed_graph, options=BiomeOptions())
-        biomes.run_full_classification()
+        try:
+            biomes = BiomeClassifier(packed_graph, options=BiomeOptions())
+            biomes.run_full_classification()
+            logger.info("Biome classification completed successfully", job_id=job_id)
+        except Exception as e:
+            logger.error("Biome classification failed, using fallback", job_id=job_id, error=str(e))
+            # Fallback: Initialize basic biome data
+            n_cells = len(packed_graph.cell_neighbors)
+            packed_graph.set_tile_data('biomes', np.zeros(n_cells, dtype=int))
+            packed_graph.set_tile_data('biome_regions', [])
+        
         with db.get_session() as session:
             job = session.query(GenerationJob).get(job_id)
             job.progress_percent = 80
+            session.commit()
+
+        # Stage 9: Validate tile events
+        logger.info("Validating tile events", job_id=job_id)
+        tile_events = packed_graph.list_tile_events()
+        logger.info(f"Generated tile events: {tile_events}", job_id=job_id)
+        
+        # Ensure all critical events exist
+        critical_events = ['temperatures', 'precipitation', 'biomes', 'water_flux']
+        for event in critical_events:
+            if not packed_graph.has_tile_data(event):
+                logger.warning(f"Missing critical tile event: {event}", job_id=job_id)
+        
+        with db.get_session() as session:
+            job = session.query(GenerationJob).get(job_id)
+            job.progress_percent = 85
             session.commit()
 
         # Final: Save map

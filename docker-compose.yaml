@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   web:
     build: .
@@ -8,6 +6,7 @@ services:
       - "9888:8000"
     volumes:
       - .:/app
+      - tiles_output:/app/tiles  # Volume pour les tuiles 3D
     env_file:
       - .env.docker # add db URL case dockerbuild
     depends_on:
@@ -26,5 +25,49 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  pg2b3dm:
+    image: geodan/pg2b3dm:latest
+    container_name: py-fmg-3d-tiles
+    restart: always
+    environment:
+      # Configuration pour pg2b3dm
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${DB_NAME}
+      PGUSER: ${DB_USER}
+      PGPASSWORD: ${DB_PASSWORD}
+    ports:
+      - "8080:8080"  # Port pour l'API pg2b3dm
+    volumes:
+      - tiles_output:/tiles  # Volume partagé pour les tuiles
+    depends_on:
+      - web
+    command:
+      [
+        "-h", "db",
+        "-U", "${DB_USER}",
+        "-d", "${DB_NAME}",
+        "-c", "SELECT settlement_index as id, name, ST_Extrude(ST_Buffer(geometry, CASE WHEN is_capital THEN 500 WHEN settlement_type = 'city' THEN 300 ELSE 200 END), 0, 0, CASE WHEN is_capital THEN 100 WHEN settlement_type = 'city' THEN 60 ELSE 30 END) as geom, CASE WHEN is_capital THEN '#FF0000' WHEN settlement_type = 'city' THEN '#FFA500' ELSE '#8B4513' END as color FROM settlements WHERE geometry IS NOT NULL",
+        "-t", "settlements_3d",
+        "--geometrycolumn", "geom",
+        "--attributescolumn", "color",
+        "-o", "/tiles/settlements",
+        "-g", "2000",
+        "--max_features_per_tile", "1000"
+      ]
+
+  # Service de visualisation 3D (optionnel)
+  cesium-viewer:
+    image: nginx:alpine
+    container_name: py-fmg-3d-viewer
+    ports:
+      - "8081:80"
+    volumes:
+      - ./viewer:/usr/share/nginx/html  # Répertoire pour le viewer Cesium
+      - tiles_output:/usr/share/nginx/html/tiles:ro  # Tuiles en lecture seule
+    depends_on:
+      - pg2b3dm
+
 volumes:
   pgdata:
+  tiles_output:  # Volume partagé pour les tuiles 3D

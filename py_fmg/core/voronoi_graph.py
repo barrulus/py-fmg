@@ -65,6 +65,197 @@ class VoronoiGraph:
         default=None
     )  # cells.b - border cell flags
 
+    # Centralized tile events dictionary - replaces individual Optional attributes
+    tile_events: Dict[str, any] = field(default_factory=dict)
+    
+    def get_tile_data(self, event_type: str, default=None):
+        """Get tile event data with fallback to default value."""
+        return self.tile_events.get(event_type, default)
+    
+    def set_tile_data(self, event_type: str, data):
+        """Set tile event data with validation."""
+        if data is not None:
+            self.tile_events[event_type] = data
+            logger.info(f"Tile event '{event_type}' set with {len(data) if hasattr(data, '__len__') else 'scalar'} data")
+        else:
+            logger.warning(f"Attempted to set None data for tile event '{event_type}'")
+    
+    def has_tile_data(self, event_type: str) -> bool:
+        """Check if tile event data exists."""
+        return event_type in self.tile_events and self.tile_events[event_type] is not None
+    
+    def list_tile_events(self) -> List[str]:
+        """List all available tile events."""
+        return list(self.tile_events.keys())
+    
+    def clear_tile_event(self, event_type: str):
+        """Clear specific tile event data."""
+        if event_type in self.tile_events:
+            del self.tile_events[event_type]
+            logger.info(f"Tile event '{event_type}' cleared")
+
+    # Legacy property accessors for backward compatibility
+    @property
+    def climate(self):
+        return self.get_tile_data('climate')
+    
+    @climate.setter
+    def climate(self, value):
+        self.set_tile_data('climate', value)
+
+    @property
+    def biomes(self):
+        return self.get_tile_data('climbiomesate')
+    
+    @biomes.setter
+    def biomes(self, value):
+        self.set_tile_data('biomes', value)
+
+    @property
+    def temperatures(self):
+        return self.get_tile_data('temperatures')
+    
+    @temperatures.setter
+    def temperatures(self, value):
+        self.set_tile_data('temperatures', value)
+    
+    @property
+    def precipitation(self):
+        return self.get_tile_data('precipitation')
+    
+    @precipitation.setter
+    def precipitation(self, value):
+        self.set_tile_data('precipitation', value)
+    
+    @property
+    def water_flux(self):
+        return self.get_tile_data('water_flux')
+    
+    @water_flux.setter
+    def water_flux(self, value):
+        self.set_tile_data('water_flux', value)
+    
+    @property
+    def flow_directions(self):
+        return self.get_tile_data('flow_directions')
+    
+    @flow_directions.setter
+    def flow_directions(self, value):
+        self.set_tile_data('flow_directions', value)
+    
+    @property
+    def filled_heights(self):
+        return self.get_tile_data('filled_heights')
+    
+    @filled_heights.setter
+    def filled_heights(self, value):
+        self.set_tile_data('filled_heights', value)
+    
+    @property
+    def rivers(self):
+        return self.get_tile_data('rivers', [])
+    
+    @rivers.setter
+    def rivers(self, value):
+        self.set_tile_data('rivers', value)
+    
+    @property
+    def lakes(self):
+        return self.get_tile_data('lakes', [])
+    
+    @lakes.setter
+    def lakes(self, value):
+        self.set_tile_data('lakes', value)
+    
+    @property
+    def biome_regions(self):
+        return self.get_tile_data('biome_regions')
+    
+    @biome_regions.setter
+    def biome_regions(self, value):
+        self.set_tile_data('biome_regions', value)
+    
+    @property
+    def cell_population(self):
+        return self.get_tile_data('cell_population')
+    
+    @cell_population.setter
+    def cell_population(self, value):
+        self.set_tile_data('cell_population', value)
+    
+    @property
+    def cell_types(self):
+        return self.get_tile_data('cell_types')
+    
+    @cell_types.setter
+    def cell_types(self, value):
+        self.set_tile_data('cell_types', value)
+
+    # Additional properties requested by user
+    @property
+    def flux(self):
+        return self.get_tile_data('flux')
+    
+    @flux.setter
+    def flux(self, value):
+        self.set_tile_data('flux', value)
+    
+    @property
+    def confluences(self):
+        return self.get_tile_data('confluences')
+    
+    @confluences.setter
+    def confluences(self, value):
+        self.set_tile_data('confluences', value)
+    
+    @property
+    def river_ids(self):
+        return self.get_tile_data('river_ids')
+    
+    @river_ids.setter
+    def river_ids(self, value):
+        self.set_tile_data('river_ids', value)
+    
+    @property
+    def harbor_scores(self):
+        return self.get_tile_data('harbor_scores')
+    
+    @harbor_scores.setter
+    def harbor_scores(self, value):
+        self.set_tile_data('harbor_scores', value)
+    
+    @property
+    def cell_areas(self):
+        return self.get_tile_data('cell_areas')
+    
+    @cell_areas.setter
+    def cell_areas(self, value):
+        self.set_tile_data('cell_areas', value)
+    
+    @property
+    def cell_haven(self):
+        return self.get_tile_data('cell_haven')
+    
+    @cell_haven.setter
+    def cell_haven(self, value):
+        self.set_tile_data('cell_haven', value)
+    
+    @property
+    def neighbors(self):
+        return self.get_tile_data('neighbors')
+    
+    @neighbors.setter
+    def neighbors(self, value):
+        self.set_tile_data('neighbors', value)
+    
+    @property
+    def cell_suitability(self):
+        return self.get_tile_data('cell_suitability')
+    
+    @cell_suitability.setter
+    def cell_suitability(self, value):
+        self.set_tile_data('cell_suitability', value)
+
     def should_regenerate(self, config: GridConfig, seed: str) -> bool:
         """Check if grid needs to be regenerated based on new parameters.
 

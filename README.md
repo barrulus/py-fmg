@@ -200,6 +200,12 @@ poetry run bandit -r py_fmg
 
 ## 🔮 Roadmap
 
+### Phase 1 optional : clean code and better practice
+- [ ] routeur as api gateway -> fast api
+- [ ] model folder and data class files
+- [ ] better management of each event and type (voronoi_graph)
+- [ ] fallback when order is wrong in collapse function and try catch behaviour.
+
 ### Phase 2: City Generation (In Progress)
 - [ ] Street-level detail generation
 - [ ] Building footprints with types

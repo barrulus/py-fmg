@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Visualize a generated map from the database."""
+"""Visualize a generated map from the database with tile events support."""
 
 import os
 import sys
@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from datetime import datetime
 import requests
+import json
 
 # Load environment variables
 env_file = Path(".env")
@@ -25,7 +26,7 @@ from sqlalchemy import create_engine, text
 def get_latest_map_id():
     """Get the ID of the most recently generated map via API."""
     try:
-        response = requests.get("http://localhost:8000/maps")
+        response = requests.get("http://localhost:9888/maps")
         if response.status_code == 200:
             maps = response.json()
             if maps:
@@ -35,16 +36,32 @@ def get_latest_map_id():
     return None
 
 
-def visualize_map(map_id=None):
-    """Visualize a map from the database."""
+def get_map_tile_events(map_id):
+    """Get tile events data for a specific map via API."""
+    try:
+        response = requests.get(f"http://localhost:9888/maps/{map_id}/statistics")
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        print(f"Could not get tile events from API: {e}")
+    return None
+
+
+def visualize_map_with_tile_events(map_id=None):
+    """Visualize a map with all tile events from the database."""
     if not map_id:
         map_id = get_latest_map_id()
         if not map_id:
             print("No maps found or API not available")
             return
 
-    print(f"Visualizing map: {map_id}")
+    print(f"Visualizing map with tile events: {map_id}")
 
+    # Get tile events data
+    tile_events = get_map_tile_events(map_id)
+    if tile_events:
+        print(f"Available tile events: {list(tile_events.keys())}")
+    
     # Connect to database
     db_url = f'postgresql://{os.environ["DB_USER"]}:{os.environ["DB_PASSWORD"]}@{os.environ["DB_HOST"]}:{os.environ["DB_PORT"]}/{os.environ["DB_NAME"]}'
     engine = create_engine(db_url)

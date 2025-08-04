@@ -26,6 +26,12 @@ from pydantic import BaseModel, Field, ConfigDict
 from sklearn.neighbors import KDTree
 
 from .name_generator import NameGenerator
+from .voronoi_graph import (
+    VoronoiGraph,
+    build_cell_connectivity,
+    build_cell_vertices,
+    build_vertex_connectivity,
+)
 
 logger = structlog.get_logger()
 
@@ -140,7 +146,7 @@ class Settlements:
 
     def __init__(
         self,
-        graph,
+        graph:VoronoiGraph,
         features,
         cultures,
         biomes,
@@ -236,17 +242,16 @@ class Settlements:
         logger.warning(
             "rank_cells() called but population is now calculated in cultures module"
         )
-        return
-
-        # Get flux statistics for normalization
+        
+        # Get flux statistics for normalization using tile_events system
         flux_values = (
             self.graph.flux
-            if hasattr(self.graph, "flux")
+            if self.graph.flux is not None
             else np.zeros(len(self.graph.points))
         )
         confluence_values = (
             self.graph.confluences
-            if hasattr(self.graph, "confluences")
+            if self.graph.confluences is not None
             else np.zeros(len(self.graph.points))
         )
 
@@ -259,9 +264,9 @@ class Settlements:
             else 1
         )
 
-        # Area normalization
+        # Area normalization using tile_events system
         area_mean = (
-            np.mean(self.graph.cell_areas) if hasattr(self.graph, "cell_areas") else 1.0
+            np.mean(self.graph.cell_areas) if self.graph.cell_areas is not None else 1.0
         )
 
         for i in range(len(self.graph.points)):
@@ -298,13 +303,13 @@ class Settlements:
             s -= (self.graph.heights[i] - 50) / 5
 
             # Coastal and lake shores get bonuses
-            if hasattr(self.graph, "cell_types") and i < len(self.graph.cell_types):
+            if self.graph.cell_types is not None and i < len(self.graph.cell_types):
                 if self.graph.cell_types[i] == 1:  # Coastline
-                    if hasattr(self.graph, "river_ids") and self.graph.river_ids[i] > 0:
+                    if self.graph.river_ids is not None and self.graph.river_ids[i] > 0:
                         s += 15  # Estuary bonus
 
                     # Check if it's a lake shore
-                    if hasattr(self.graph, "cell_haven") and i < len(
+                    if self.graph.cell_haven is not None and i < len(
                         self.graph.cell_haven
                     ):
                         haven = self.graph.cell_haven[i]
@@ -327,12 +332,13 @@ class Settlements:
             self.cell_suitability[i] = max(0, min(int(s), 32767))
 
             # Calculate population based on suitability and area
-            if hasattr(self.graph, "cell_areas") and i < len(self.graph.cell_areas):
+            if self.graph.cell_areas is not None and i < len(self.graph.cell_areas):
                 area_factor = self.graph.cell_areas[i] / area_mean
             else:
                 area_factor = 1.0
 
             self.cell_population[i] = max(0, s * area_factor / 100)
+            return 
 
     def _normalize(self, value: float, mean: float, max_val: float) -> float:
         """Normalize value using FMG's normalization formula."""
@@ -717,7 +723,7 @@ class Settlements:
             # State type population preferences
             if (
                 state_type == "River"
-                and hasattr(self.graph, "river_ids")
+                and self.graph.river_ids is not None
                 and self.graph.river_ids[cell_id] > 0
             ):
                 pop_cost *= (
@@ -746,7 +752,7 @@ class Settlements:
         cost += self._get_height_cost(height, state_type, cell_id)
 
         # River expansion preferences
-        if hasattr(self.graph, "river_ids") and self.graph.river_ids[cell_id] > 0:
+        if self.graph.river_ids is not None and self.graph.river_ids[cell_id] > 0:
             river_cost = self._get_river_cost(cell_id, state_type)
             # Special river state bonuses
             if state_type == "River":
@@ -754,7 +760,7 @@ class Settlements:
             cost += river_cost
 
         # Coastal terrain preferences
-        if hasattr(self.graph, "cell_types"):
+        if self.graph.cell_types is not None:
             terrain_type = self.graph.cell_types[cell_id]
             terrain_cost = self._get_terrain_cost(terrain_type, state_type)
             # Enhanced coastal preferences for naval states
@@ -957,7 +963,7 @@ class Settlements:
             return 0  # No penalty for river cultures
 
         # Get flux to determine river size
-        if hasattr(self.graph, "flux") and cell_id < len(self.graph.flux):
+        if self.graph.flux is not None and cell_id < len(self.graph.flux):
             flux = self.graph.flux[cell_id]
             return min(max(int(flux / 10), 20), 100)
 
@@ -1118,7 +1124,7 @@ class Settlements:
 
             # Check for natural boundary features
             has_river = (
-                hasattr(self.graph, "river_ids")
+                self.graph.river_ids is not None
                 and i < len(self.graph.river_ids)
                 and self.graph.river_ids[i] > 0
             )
@@ -1141,7 +1147,7 @@ class Settlements:
                 # Rivers can form natural boundaries but also unite riverine peoples
                 if has_river:
                     n_has_river = (
-                        hasattr(self.graph, "river_ids")
+                        self.graph.river_ids is not None
                         and n < len(self.graph.river_ids)
                         and self.graph.river_ids[n] > 0
                     )
@@ -1272,7 +1278,7 @@ class Settlements:
         cell_id = settlement.cell_id
 
         # Check if cell has harbor access
-        if not hasattr(self.graph, "cell_haven") or cell_id >= len(
+        if not self.graph.cell_haven is not None or cell_id >= len(
             self.graph.cell_haven
         ):
             return 0
@@ -1282,7 +1288,7 @@ class Settlements:
             return 0
 
         # Check temperature (no frozen ports)
-        if hasattr(self.graph, "temperature") and self.graph.temperature[cell_id] <= 0:
+        if self.graph.temperature is not None and self.graph.temperature[cell_id] <= 0:
             return 0
 
         # Check water body
@@ -1290,11 +1296,11 @@ class Settlements:
             feature = self.features.features[haven]
             if hasattr(feature, "cells") and feature.cells > 1:
                 # Capital with any harbor OR town with good harbor
-                if settlement.is_capital and hasattr(self.graph, "harbor_scores"):
+                if settlement.is_capital and self.graph.harbor_scores is not None:
                     if self.graph.harbor_scores[cell_id] > 0:
                         return feature.id
                 elif (
-                    hasattr(self.graph, "harbor_scores")
+                    self.graph.harbor_scores is not None
                     and self.graph.harbor_scores[cell_id] == 1
                 ):
                     return feature.id
@@ -1311,7 +1317,7 @@ class Settlements:
         current_x, current_y = settlement.x, settlement.y
 
         # If no distance field available, return current position
-        if not hasattr(self.graph, "distance_field"):
+        if not self.graph.distance_field is not None:
             return current_x, current_y
 
         # Find the best water edge direction
@@ -1319,7 +1325,7 @@ class Settlements:
         min_distance_to_water = float("inf")
 
         # Check neighbors for water edges
-        if hasattr(self.graph, "neighbors") and cell_id < len(self.graph.neighbors):
+        if self.graph.neighbors is not None and cell_id < len(self.graph.neighbors):
             for neighbor_id in self.graph.neighbors[cell_id]:
                 if neighbor_id >= len(self.graph.heights):
                     continue
@@ -1357,7 +1363,7 @@ class Settlements:
                                 continue
 
                             # Estimate cell position (simplified grid approach)
-                            if hasattr(self.graph, "cells_x"):
+                            if self.graph.cells_x is not None:
                                 cells_x = self.graph.cells_x
                                 row = cell_id // cells_x
                                 col = cell_id % cells_x
@@ -1407,7 +1413,7 @@ class Settlements:
             return "Port"  # More specific than just "Naval"
 
         # Lake settlements
-        if hasattr(self.graph, "cell_haven") and cell_id < len(self.graph.cell_haven):
+        if self.graph.cell_haven is not None and cell_id < len(self.graph.cell_haven):
             haven = self.graph.cell_haven[cell_id]
             if haven > 0 and haven < len(self.features.features):
                 feature = self.features.features[haven]
@@ -1425,9 +1431,9 @@ class Settlements:
 
         # River settlements (culture-specific variations)
         if (
-            hasattr(self.graph, "river_ids")
+            self.graph.river_ids is not None
             and self.graph.river_ids[cell_id] > 0
-            and hasattr(self.graph, "flux")
+            and self.graph.flux is not None
             and self.graph.flux[cell_id] >= 100
         ):
             if culture_type == "River":
@@ -1439,7 +1445,7 @@ class Settlements:
         if culture_type == "Naval":
             # Check if near coast
             if (
-                hasattr(self.graph, "distance_field")
+                self.graph.distance_field is not None
                 and cell_id < len(self.graph.distance_field)
                 and self.graph.distance_field[cell_id] <= 2
             ):  # Close to coast
