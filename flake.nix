@@ -40,9 +40,6 @@
             pythonEnv
             poetry
             
-            # Database
-            postgresql_15
-            postgis
             
             # Geospatial libraries
             gdal
@@ -57,7 +54,6 @@
             echo "Python Fantasy Map Generator development environment"
             echo "Python: $(python --version)"
             echo "Poetry: $(poetry --version)"
-            echo "PostgreSQL: $(postgres --version)"
             
             # Set up environment variables for geospatial libraries
             export GDAL_DATA="${pkgs.gdal}/share/gdal"
