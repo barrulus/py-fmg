@@ -48,6 +48,10 @@
             
             # Development tools
             git
+            
+            # Required for NumPy and other compiled packages
+            gcc-unwrapped.lib
+            stdenv.cc.cc.lib
           ];
 
           shellHook = ''
@@ -58,6 +62,9 @@
             # Set up environment variables for geospatial libraries
             export GDAL_DATA="${pkgs.gdal}/share/gdal"
             export PROJ_LIB="${pkgs.proj}/share/proj"
+            
+            # Add library paths for compiled packages
+            export LD_LIBRARY_PATH="${pkgs.gcc-unwrapped.lib}/lib:${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
           '';
         };
       });
