@@ -215,10 +215,11 @@ class Settlements:
                 flux_score = self._normalize(flux_values[i] + confluence_values[i], fl_mean, fl_max) * 250
                 s += flux_score
 
-            # Low elevation is valued, high is not
-            s -= (self.graph.heights[i] - 50) / 5
+            # Low elevation is valued, high is not (cast to int to avoid uint8 underflow)
+            h = int(self.graph.heights[i])
+            s -= (h - 50) / 5
 
-            # Coastal and lake shores get bonuses
+            # Coastal and lake shores get bonuses; don't penalize if cell_types missing
             if hasattr(self.graph, 'cell_types') and i < len(self.graph.cell_types):
                 if self.graph.cell_types[i] == 1:  # Coastline
                     if hasattr(self.graph, 'river_ids') and self.graph.river_ids[i] > 0:
@@ -238,6 +239,9 @@ class Settlements:
                                 s += 25  # Ocean access bonus
                 else:
                     s -= 5  # Non-coastal penalty
+            else:
+                # No cell_types info; skip coastal penalty/bonus
+                pass
 
             # Store suitability score (clamped to int16 range)
             self.cell_suitability[i] = max(0, min(int(s), 32767))
@@ -337,6 +341,36 @@ class Settlements:
                 spacing /= 1.2
                 attempts += 1
                 logger.warning(f"Retrying capital placement with reduced spacing: {spacing:.2f}")
+
+        # Fallback: ensure at least 1 capital if we have any viable cell
+        if len(capitals) == 0:
+            picked_id = None
+            if valid_cells:
+                picked_id = valid_cells[0][1]
+            else:
+                # Pick the best land cell by suitability
+                best_score = -1
+                for i in range(len(self.cell_suitability)):
+                    if self.graph.heights[i] >= 20 and self.cell_suitability[i] > best_score:
+                        best_score = int(self.cell_suitability[i])
+                        picked_id = i
+
+            if picked_id is not None:
+                x, y = self.graph.points[picked_id]
+                capital = Settlement(
+                    id=self.next_settlement_id,
+                    cell_id=picked_id,
+                    x=x,
+                    y=y,
+                    is_capital=True,
+                    culture_id=self.cultures.cell_cultures[picked_id] if hasattr(self.cultures, 'cell_cultures') else 0,
+                    religion_id=self._get_religion_for_cell(picked_id)
+                )
+                capitals.append(capital)
+                self.settlements[capital.id] = capital
+                self.cell_settlement[picked_id] = capital.id
+                self.next_settlement_id += 1
+                logger.warning("No capitals placed under spacing constraints; placed a fallback capital at best land cell")
 
         logger.info(f"Placed {len(capitals)} capital cities")
         return capitals
@@ -952,12 +986,13 @@ class Settlements:
             for n in neighbors:
                 if n >= len(self.graph.heights) or self.graph.heights[n] < 20:
                     continue
-                    
+                
                 n_state = self.cell_state[n]
                 if n_state == current_state or n_state == 0:
                     continue
                 
-                height_diff = abs(current_height - self.graph.heights[n])
+                # Cast to int to avoid uint8 underflow/overflow
+                height_diff = abs(int(current_height) - int(self.graph.heights[n]))
                 
                 # Major height differences should maintain boundaries
                 if height_diff > 30:  # Significant elevation change
@@ -966,8 +1001,8 @@ class Settlements:
                 # Rivers can form natural boundaries but also unite riverine peoples
                 if has_river:
                     n_has_river = (hasattr(self.graph, 'river_ids') and 
-                                  n < len(self.graph.river_ids) and 
-                                  self.graph.river_ids[n] > 0)
+                                   n < len(self.graph.river_ids) and 
+                                   self.graph.river_ids[n] > 0)
                     
                     if n_has_river:
                         # Both have rivers - river states should be unified

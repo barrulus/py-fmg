@@ -36,6 +36,10 @@ class HydrologyOptions:
     manning_n: float = 0.035  # Manning's roughness coefficient (natural channels)
     depth_width_ratio: float = 0.1  # Typical depth/width ratio for rivers
     min_slope: float = 0.0001  # Minimum slope to prevent division by zero
+    
+    # Controls to improve continuity without lowering counts
+    precip_multiplier: float = 1.0  # Multiply precipitation when adding flux
+    snap_to_coast_steps: int = 3    # BFS steps to snap river mouths to coast
 
 
 @dataclass
@@ -168,18 +172,40 @@ class Hydrology:
         check_lake_max_iteration = int(max_iterations * 0.85)
         elevate_lake_max_iteration = int(max_iterations * 0.75)
 
-        # Helper function to get height of lake or cell (matches FMG's height function)
+        # Helper function to get height of lake or cell (optimized)
+        # Use cached feature-by-id lookup if present
+        feature_by_id = {}
+        try:
+            feats = getattr(self.features, 'features', None)
+            if isinstance(feats, list):
+                for f in feats:
+                    if f is None:
+                        continue
+                    fid = getattr(f, 'id', None)
+                    if fid is not None:
+                        feature_by_id[int(fid)] = f
+        except Exception:
+            feature_by_id = {}
+
         def height(i: int) -> float:
-            if (hasattr(self.features, 'feature_ids') and
-                self.features.feature_ids is not None and
-                i < len(self.features.feature_ids)):
-                feature_id = self.features.feature_ids[i]
-                if feature_id > 0 and hasattr(self.features, 'features'):
-                    for feature in self.features.features:
-                        if feature and hasattr(feature, 'id') and feature.id == feature_id:
-                            if hasattr(feature, 'height') and feature.height is not None:
-                                return feature.height
-            return self.graph.heights[i]
+            h = float(int(self.graph.heights[i]))
+            if h >= self.options.sea_level:
+                return h
+            # For water cells, if part of a lake with assigned height, return elevated lake height
+            try:
+                fids = getattr(self.features, 'feature_ids', None)
+                if fids is not None and i < len(fids):
+                    fid = int(fids[i])
+                    if fid > 0:
+                        ft = feature_by_id.get(fid)
+                        if ft is not None and getattr(ft, 'type', None) == 'lake':
+                            lake_h = getattr(ft, 'height', None)
+                            if lake_h is not None:
+                                return float(lake_h)
+                            return h + 0.1
+            except Exception:
+                pass
+            return h
 
         # Get lakes and land cells
         lakes = []
@@ -200,6 +226,7 @@ class Hydrology:
         depressions = float('inf')
         prev_depressions = None
 
+        stagnation = 0
         for iteration in range(max_iterations):
             # Check for bad progress (matches FMG logic)
             if len(progress) > 5 and sum(progress) > 0:
@@ -276,11 +303,19 @@ class Hydrology:
             # Track progress
             if prev_depressions is not None:
                 progress.append(depressions - prev_depressions)
+                if depressions >= prev_depressions:
+                    stagnation += 1
+                else:
+                    stagnation = 0
             prev_depressions = depressions
 
             # Check if converged
             if depressions == 0:
                 logger.info(f"Depression resolution converged after {iteration + 1} iterations")
+                break
+            # Stop if not making progress for several iterations
+            if stagnation >= 5:
+                logger.warning("Depression resolution stagnated; aborting early", remaining=depressions)
                 break
 
         if depressions > 0:
@@ -447,7 +482,7 @@ class Hydrology:
                 else:
                     precip = self.climate.precipitation[cell_id] if cell_id < len(self.climate.precipitation) else 50.0
 
-            self.flux[cell_id] += precip / cells_number_modifier
+            self.flux[cell_id] += (precip * self.options.precip_multiplier) / cells_number_modifier
 
             # Step 2: Check if this cell is a lake outlet
             if cell_id in lake_out_cells:
@@ -572,7 +607,17 @@ class Hydrology:
                 lowest_height = neighbor_height
                 target_cell = neighbor_id
 
-        return target_cell
+        if target_cell is not None:
+            return target_cell
+        # Epsilon descend: pick the lowest neighbor even if equal/higher to avoid stalls
+        min_h = None
+        min_id = None
+        for neighbor_id in neighbors:
+            nh = self.graph.heights[neighbor_id]
+            if min_h is None or nh < min_h or (nh == min_h and (min_id is None or neighbor_id < min_id)):
+                min_h = nh
+                min_id = neighbor_id
+        return min_id
 
     def _find_flow_target_excluding_lakes(self, cell_id: int, lake_ids: List[int]) -> Optional[int]:
         """Find the lowest neighbor to flow water to, excluding cells in specified lakes."""
@@ -747,6 +792,42 @@ class Hydrology:
             # Calculate distance from source for the mouth
             if river.cells:
                 river.source_distance = self._calculate_source_distance(river.cells)
+        
+        # Snap river mouths near coast to the sea with a short BFS if requested
+        if self.options.snap_to_coast_steps and self.options.snap_to_coast_steps > 0:
+            for river_id, river in list(self.rivers.items()):
+                if not river.cells:
+                    continue
+                mouth = river.cells[-1]
+                if self.graph.heights[mouth] < self.options.sea_level:
+                    continue  # already at water
+                path = self._bfs_to_coast(mouth, self.options.snap_to_coast_steps)
+                if path:
+                    for c in path:
+                        if c not in river.cells:
+                            river.cells.append(c)
+                            self.river_ids[c] = river_id
+
+    def _bfs_to_coast(self, start: int, max_steps: int) -> List[int] | None:
+        """Short BFS to the nearest ocean cell, returning path of cells (excluding start)."""
+        from collections import deque
+        q = deque()
+        q.append((start, []))
+        seen = set([start])
+        steps = 0
+        while q and steps <= max_steps:
+            for _ in range(len(q)):
+                cell, path = q.popleft()
+                for n in self._get_neighbors(cell):
+                    if n in seen:
+                        continue
+                    seen.add(n)
+                    npath = path + [n]
+                    if self.graph.heights[n] < self.options.sea_level:
+                        return npath
+                    q.append((n, npath))
+            steps += 1
+        return None
 
     def _calculate_river_width(self, discharge: float, river_cells: Optional[List[int]] = None) -> float:
         """

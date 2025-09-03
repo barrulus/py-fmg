@@ -190,10 +190,11 @@ class CultureGenerator:
                 )
                 s += flux_score
 
-            # Low elevation is valued, high is not
-            s -= (self.graph.heights[i] - 50) / 5
+            # Low elevation is valued, high is not (cast to int to avoid uint8 underflow)
+            h = int(self.graph.heights[i])
+            s -= (h - 50) / 5
 
-            # Coastal and lake shores get bonuses
+            # Coastal and lake shores get bonuses; don't penalize if cell_types missing
             if hasattr(self.graph, 'cell_types') and i < len(self.graph.cell_types):
                 if self.graph.cell_types[i] == 1:  # Coastline
                     if hasattr(self.graph, 'river_ids') and self.graph.river_ids[i] > 0:
@@ -215,6 +216,9 @@ class CultureGenerator:
                                 s += 25  # Ocean access bonus
                 else:
                     s -= 5  # Non-coastal penalty
+            else:
+                # No cell_types info; skip coastal penalty/bonus
+                pass
 
             # Store suitability score (clamped to int16 range)
             self.cell_suitability[i] = max(0, min(int(s), 32767))
@@ -681,4 +685,3 @@ class CultureGenerator:
                 base_habitability = int(base_habitability * 0.7)  # Very wet conditions
 
         return int(max(0, min(100, base_habitability)))
-

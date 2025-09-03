@@ -67,6 +67,8 @@ output/
 generated/
 visualizations/
 maps/
+out/
+*.map
 
 # Data files
 data/
@@ -77,12 +79,6 @@ datasets/
 *.shx
 *.dbf
 *.prj
-
-# FMG reference files and archives
-fmg/
-reference/
-debug_archive/
-debug/
 
 # Jupyter notebooks
 *.ipynb_checkpoints
