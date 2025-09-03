@@ -6,7 +6,7 @@ authors = ["barrulus <me@barrulus.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = ">=3.11,<4.0"
+python = ">=3.13,<4.0"
 fastapi = "0.116.1"
 # geoalchemy2 = "0.14.2"
 # geopandas = "0.14.1"
