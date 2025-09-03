@@ -68,8 +68,15 @@ curl -X POST "http://localhost:8000/maps/generate" \
     "width": 800,
     "height": 600,
     "cells_desired": 10000,
-    "map_name": "Test Map"
+    "map_name": "Test Map",
+    "template": "volcano"  
+    # You can also use "template_name" instead of "template"
   }'
+
+Note:
+- The server accepts either `template_name` or `template`.
+- If omitted, it defaults to `continents`.
+- Available templates: `highVolcano`, `volcano`, `highIsland`, `lowIsland`, `continents`, `archipelago`, `atoll`, `mediterranean`, `peninsula`, `pangea`, `isthmus`, `shattered`, `taklamakan`, `oldWorld`, `fractious`.
 
 # Response: {"job_id": "uuid", "status": "pending", ...}
 

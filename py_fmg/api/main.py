@@ -8,7 +8,7 @@ import numpy as np
 import structlog
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, AliasChoices
 
 from ..config import settings
 from ..core.biomes import BiomeClassifier
@@ -81,7 +81,12 @@ class MapGenerationRequest(BaseModel):
     cells_desired: int = Field(
         10000, ge=1000, le=50000, description="Target number of cells"
     )
-    template_name: str = Field("default", description="Heightmap template name")
+    # Accept both 'template_name' and legacy 'template' keys; default to a valid template
+    template_name: str = Field(
+        default="continents",
+        validation_alias=AliasChoices("template_name", "template"),
+        description="Heightmap template name",
+    )
     map_name: Optional[str] = Field(None, description="Custom map name")
 
 

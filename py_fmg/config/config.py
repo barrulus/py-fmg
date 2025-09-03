@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # API
     api_host: str = Field(default="0.0.0.0", description="API host")
-    api_port: int = Field(default=8000, description="API port")
+    api_port: int = Field(default=9002, description="API port")
 
     # Generation
     max_map_size: int = Field(default=2048, description="Maximum map size")
