@@ -17,6 +17,12 @@ if env_file.exists():
             line = line.strip()
             if line and not line.startswith("#"):
                 key, value = line.split("=", 1)
+                value = value.strip()
+                # Strip surrounding single or double quotes if present
+                if (value.startswith("'") and value.endswith("'")) or (
+                    value.startswith('"') and value.endswith('"')
+                ):
+                    value = value[1:-1]
                 os.environ[key] = value
 
 from sqlalchemy import create_engine, text
