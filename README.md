@@ -52,6 +52,17 @@ poetry install
 poetry run uvicorn py_fmg.api.main:app --reload
 ```
 
+### CLI Reference
+
+For all CLI flags and their default values, see:
+`QUICKSTART.md#cli-switches`
+
+Example quick run (writes GeoJSON + Leaflet previews):
+
+```bash
+python cli/main.py --width 1200 --height 800 --cells 20000 --template continents --preview --geojson
+```
+
 ## NixOs Setup
 
 ### NixOS Setup

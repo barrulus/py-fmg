@@ -104,6 +104,53 @@ for i, neighbors in enumerate(graph.cell_neighbors[:5]):
     print(f"Cell {i} neighbors: {neighbors}")
 ```
 
+## CLI Switches
+
+Below is a complete list of `cli/main.py` switches with defaults. This mirrors `gen-sample.sh` so you can copy/paste and tweak.
+
+```text
+# Core map params
+--width <float>               # Map width (px) (default: 1000)
+--height <float>              # Map height (px) (default: 800)
+--cells <int>                 # Target number of cells (default: 10000)
+--seed <str>                  # Random seed (string) (default: None)
+--out <path>                  # Output directory root (default: out)
+--template <str>              # Heightmap template name (default: continents)
+--target-land <0..1>          # Target land fraction; auto-shift sea level (default: None)
+
+# Preview
+--preview [basename]          # Generate Leaflet layers preview; size from --width/--height (default: disabled)
+--preview-scale <float>       # Scale factor for preview size (default: 1.0)
+--no-relax                    # Disable Lloyd relaxation (flag) (default: false)
+
+# FMG .map export
+--export-map [path]           # Export FMG .map; default {template}_{timestamp}.map if no path given (default: disabled)
+--export-map-minimal          # Minimal .map with safe defaults (flag) (default: false)
+
+# Hydrology
+--min-river-flux <float>      # Minimum flux to form a visible river (default: 30.0)
+--precip-mult <float>         # Multiplier for precipitation in hydrology (default: 1.0)
+--snap-to-coast-steps <int>   # Steps to snap river mouths to coast (default: 3)
+
+# Climate tuning
+--equator-temp <float>        # Sea-level temperature at equator (°C) (default: None)
+--tropical-gradient <float>   # Temperature drop per degree in tropics (°C/°) (default: None)
+--itcz-width <float>          # ITCZ half-width around equator (degrees) (default: None)
+--itcz-boost <float>          # ITCZ precipitation multiplier (default: None)
+
+# Settlements and states
+--states-number <int>         # Target number of states (capitals) (default: 30)
+--burgs-number <int>          # Target number of towns (1000 = auto) (default: 1000)
+--town-spacing-base <int>     # Base divisor (lower = more towns) (default: 150)
+--town-spacing-power <float>  # Power adjustment (lower = more towns) (default: 0.7)
+--urbanization-rate <float>   # Urbanization rate (0..1) (default: 0.1)
+```
+
+Tips
+- More headwaters: lower `--min-river-flux` (e.g., 20) and raise `--precip-mult` (1.2–1.5).
+- Wetter tropics: increase `--itcz-boost` (1.5–2.0) and widen `--itcz-width` (12–20).
+- More towns: increase `--burgs-number` and lower `--town-spacing-base`.
+
 ## Current Capabilities
 
 ### ✅ Working Features
@@ -203,3 +250,5 @@ See `IMPLEMENTATION_STATUS.md` for detailed roadmap and `TASKS.md` for complete 
 - Ensure scipy and numpy are installed correctly
 - Check random seed consistency in tests
 - Verify Voronoi diagram generation works
+# GeoJSON export
+--geojson [basename]          # Write GeoJSON artifacts (optional basename; default {template}_{timestamp}); omit flag to disable

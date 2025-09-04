@@ -124,8 +124,11 @@ class Hydrology:
         """
         logger.info("Altering heights for water flow")
 
-        # Store original heights
+        # Store original heights and promote to float for sub-cell adjustments
         self.original_heights = self.graph.heights.copy()
+        if not isinstance(self.graph.heights, np.ndarray) or self.graph.heights.dtype.kind in ('u','i'):
+            # Use float for precise +0.1 / +0.2 adjustments like FMG
+            self.graph.heights = self.graph.heights.astype(np.float32)
 
         # Check if distance field is available
         if not hasattr(self.graph, 'distance_field') or self.graph.distance_field is None:
@@ -188,7 +191,8 @@ class Hydrology:
             feature_by_id = {}
 
         def height(i: int) -> float:
-            h = float(int(self.graph.heights[i]))
+            # Do not cast to int: we work with float heights during hydrology
+            h = float(self.graph.heights[i])
             if h >= self.options.sea_level:
                 return h
             # For water cells, if part of a lake with assigned height, return elevated lake height
@@ -464,6 +468,20 @@ class Hydrology:
         # Sort by height - highest first (matches FMG's land.sort((a, b) => h[b] - h[a]))
         land_cells.sort(key=lambda i: self.graph.heights[i], reverse=True)
 
+        # Helper to check permafrost
+        def is_permafrost(cid: int) -> bool:
+            try:
+                if hasattr(self.climate, 'temperatures') and self.climate.temperatures is not None:
+                    if hasattr(self.graph, 'grid_indices') and self.graph.grid_indices is not None:
+                        gid = self.graph.grid_indices[cid]
+                    else:
+                        gid = cid
+                    t = float(self.climate.temperatures[gid]) if gid < len(self.climate.temperatures) else 0.0
+                    return t < getattr(self.climate.options, 'permafrost_threshold', -5.0)
+            except Exception:
+                return False
+            return False
+
         for cell_id in land_cells:
             # Step 1: Add precipitation flux to this cell
             if (hasattr(self.climate, 'precipitation') and
@@ -482,7 +500,9 @@ class Hydrology:
                 else:
                     precip = self.climate.precipitation[cell_id] if cell_id < len(self.climate.precipitation) else 50.0
 
-            self.flux[cell_id] += (precip * self.options.precip_multiplier) / cells_number_modifier
+            # Do not accumulate flux in permafrost (glacial) cells
+            if not is_permafrost(cell_id):
+                self.flux[cell_id] += (precip * self.options.precip_multiplier) / cells_number_modifier
 
             # Step 2: Check if this cell is a lake outlet
             if cell_id in lake_out_cells:
@@ -579,6 +599,9 @@ class Hydrology:
                 continue
 
             # Above river threshold - create/extend river
+            # Avoid starting rivers in permafrost cells
+            if is_permafrost(cell_id) or is_permafrost(target_cell):
+                continue
             if self.river_ids[cell_id] == 0:
                 # Create new river
                 river_id = self.next_river_id
@@ -708,6 +731,17 @@ class Hydrology:
 
     def _flow_down(self, to_cell: int, from_flux: float, river_id: int) -> None:
         """Transfer flux downstream following FMG's flowDown algorithm exactly."""
+        # Block flow into permafrost cells to avoid rivers in glaciers
+        try:
+            if hasattr(self.climate, 'temperatures') and self.climate.temperatures is not None:
+                gid = to_cell
+                if hasattr(self.graph, 'grid_indices') and self.graph.grid_indices is not None:
+                    gid = self.graph.grid_indices[to_cell]
+                if gid < len(self.climate.temperatures):
+                    if float(self.climate.temperatures[gid]) < getattr(self.climate.options, 'permafrost_threshold', -5.0):
+                        return
+        except Exception:
+            pass
         # Get current flux and river for target cell
         to_flux = self.flux[to_cell] - self.confluences[to_cell].astype(float).sum() if hasattr(self.confluences[to_cell], 'sum') else (self.flux[to_cell] - (1.0 if self.confluences[to_cell] else 0.0))
         to_river_id = self.river_ids[to_cell]

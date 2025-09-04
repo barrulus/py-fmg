@@ -23,6 +23,13 @@ from py_fmg.exporter_geojson import (
     export_biomes_geojson,
     export_rivers_geojson,
     export_rivers_smooth_geojson,
+    build_cells_fc,
+    build_coastlines_fc,
+    build_watermask_fc,
+    build_climate_fc,
+    build_biomes_fc,
+    build_rivers_fc,
+    build_rivers_smooth_fc,
 )
 from py_fmg.core.climate import Climate, ClimateOptions
 from py_fmg.core.biomes import BiomeClassifier
@@ -42,15 +49,26 @@ def main() -> None:
     parser.add_argument("--out", type=str, default="out", help="Output directory root")
     parser.add_argument("--template", type=str, default="continents", help="Heightmap template name")
     parser.add_argument("--target-land", type=float, default=None, help="Target land fraction [0-1] (auto sea-level shift)")
-    parser.add_argument("--preview-width", type=int, default=1200, help="Preview width in px")
-    parser.add_argument("--preview-height", type=int, default=800, help="Preview height in px")
+    # Output toggles (single-switch enable; omit to disable)
+    # --geojson [basename] : if provided, write GeoJSON; basename optional, else default naming
+    # --preview [basename] : if provided, write Leaflet preview; basename optional, else default naming
+    parser.add_argument("--geojson", nargs="?", default=None, const="", help="Enable GeoJSON export (optional basename)")
+    parser.add_argument("--preview", nargs="?", default=None, const="", help="Enable Leaflet preview (optional basename)")
+    parser.add_argument("--preview-scale", type=float, default=1.0, help="Scale factor for preview size relative to --width/--height")
     parser.add_argument("--no-relax", action="store_true", help="Disable Lloyd relaxation")
-    parser.add_argument("--export-map", type=str, default=None, help="Write FMG .map file to this path")
+    # Export .map: enable by presence; default filename {template}_{timestamp}.map if no value given
+    parser.add_argument("--export-map", nargs="?", default=None, const="", help="Export FMG .map (optional path; defaults to {template}_{timestamp}.map)")
     parser.add_argument("--export-map-minimal", action="store_true", help="Export a minimal .map with safe defaults for FMG import")
     # Hydrology tuning
     parser.add_argument("--min-river-flux", type=float, default=30.0, help="Minimum flux to form a visible river")
     parser.add_argument("--precip-mult", type=float, default=1.0, help="Multiplier for precipitation in hydrology")
     parser.add_argument("--snap-to-coast-steps", type=int, default=3, help="Steps to snap river mouths to coast")
+    parser.add_argument("--resolve-steps", type=int, default=100, help="Max iterations for depression resolution")
+    # Climate tuning
+    parser.add_argument("--equator-temp", type=float, default=None, help="Sea-level temperature at equator (°C)")
+    parser.add_argument("--tropical-gradient", type=float, default=None, help="Temperature drop per degree latitude in tropics (°C/°)")
+    parser.add_argument("--itcz-width", type=float, default=None, help="ITCZ half-width in degrees around equator")
+    parser.add_argument("--itcz-boost", type=float, default=None, help="ITCZ precipitation multiplier within band")
     # Settlement tuning
     parser.add_argument("--states-number", type=int, default=30, help="Target number of states (capitals)")
     parser.add_argument("--burgs-number", type=int, default=1000, help="Target number of towns (1000 = auto)")
@@ -59,7 +77,16 @@ def main() -> None:
     parser.add_argument("--urbanization-rate", type=float, default=0.1, help="Urbanization rate (0..1) used in settlement sizing")
     args = parser.parse_args()
 
-    map_id = (args.seed or datetime.utcnow().strftime("%Y%m%d%H%M%S"))[:16]
+    # Compose a default basename using template and timestamp (no spaces)
+    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    default_basename = f"{args.template}_{ts}"
+    # Decide basenames independently of seed for artifacts
+    geojson_enabled = args.geojson is not None
+    preview_enabled = args.preview is not None
+    geojson_basename = (args.geojson if args.geojson else default_basename) if geojson_enabled else None
+    preview_basename = (args.preview if args.preview else default_basename) if preview_enabled else None
+    # map_id used in properties: prefer geojson basename, then preview basename, else default
+    map_id = (geojson_basename or preview_basename or default_basename)[:32]
     out_root = Path(args.out)
     out_root.mkdir(parents=True, exist_ok=True)
 
@@ -93,13 +120,28 @@ def main() -> None:
     # Detect features (coastlines, oceans, lakes) for is_coast flags
     feat = Features(graph, seed=args.seed)
     feat.markup_grid()
+    try:
+        feat.add_lakes_in_deep_depressions()
+        feat.open_near_sea_lakes()
+    except Exception as e:
+        print(f"Lake preprocessing skipped: {e}")
     # Persist fields on graph for exporter convenience
     graph.distance_field = feat.distance_field
     graph.feature_ids = feat.feature_ids
     graph.features = feat.features
 
     # Climate: temperatures + precipitation
-    climate = Climate(graph, options=ClimateOptions())
+    clim_opts = ClimateOptions()
+    if getattr(args, "equator_temp", None) is not None:
+        clim_opts.temperature_equator = float(args.equator_temp)
+    if args.tropical_gradient is not None:
+        clim_opts.tropical_gradient = float(args.tropical_gradient)
+    if getattr(args, "itcz_width", None) is not None:
+        clim_opts.itcz_width_deg = float(args.itcz_width)
+    if getattr(args, "itcz_boost", None) is not None:
+        clim_opts.itcz_boost = float(args.itcz_boost)
+
+    climate = Climate(graph, options=clim_opts)
     climate.calculate_temperatures()
     climate.generate_precipitation()
     graph.temperatures = climate.temperatures
@@ -114,16 +156,18 @@ def main() -> None:
         neighbors=graph.cell_neighbors,
     )
 
-    geo_path = export_cells_geojson(graph, out_root, map_id)
-    print(f"Wrote cells: {geo_path}")
+    geo_path = coast_path = watermask_path = climate_path = biomes_path = None
+    if geojson_enabled:
+        geo_path = export_cells_geojson(graph, out_root, geojson_basename)
+        print(f"Wrote cells: {geo_path}")
 
-    coast_path = export_coastlines_geojson(graph, out_root, map_id)
-    print(f"Wrote coastlines: {coast_path}")
-    watermask_path = export_watermask_geojson(graph, out_root, map_id)
-    print(f"Wrote watermask: {watermask_path}")
-    climate_path = export_climate_geojson(graph, graph.temperatures, graph.precipitation, out_root, map_id)
-    print(f"Wrote climate: {climate_path}")
-    biomes_path = export_biomes_geojson(graph, cell_biomes, biome_classifier, out_root, map_id)
+        coast_path = export_coastlines_geojson(graph, out_root, geojson_basename)
+        print(f"Wrote coastlines: {coast_path}")
+        watermask_path = export_watermask_geojson(graph, out_root, geojson_basename)
+        print(f"Wrote watermask: {watermask_path}")
+        climate_path = export_climate_geojson(graph, graph.temperatures, graph.precipitation, out_root, geojson_basename)
+        print(f"Wrote climate: {climate_path}")
+        biomes_path = export_biomes_geojson(graph, cell_biomes, biome_classifier, out_root, geojson_basename)
     # Rivers (after climate and features)
     hyd = Hydrology(
         graph,
@@ -133,18 +177,22 @@ def main() -> None:
             min_river_flux=args.min_river_flux,
             precip_multiplier=args.precip_mult,
             snap_to_coast_steps=args.snap_to_coast_steps,
+            max_depression_iterations=args.resolve_steps,
         ),
     )
     rivers = hyd.generate_rivers()
-    rivers_path = export_rivers_geojson(graph, rivers, out_root, map_id)
-    rivers_smooth_path = export_rivers_smooth_geojson(graph, rivers, out_root, map_id)
-    print(f"Wrote rivers: {rivers_path}")
-    print(f"Wrote rivers (smooth): {rivers_smooth_path}")
+    rivers_path = rivers_smooth_path = None
+    if geojson_enabled:
+        rivers_path = export_rivers_geojson(graph, rivers, out_root, geojson_basename)
+        rivers_smooth_path = export_rivers_smooth_geojson(graph, rivers, out_root, geojson_basename)
+        print(f"Wrote rivers: {rivers_path}")
+        print(f"Wrote rivers (smooth): {rivers_smooth_path}")
     # Attach hydro arrays to graph for downstream modules
     graph.river_ids = hyd.river_ids
     graph.confluences = hyd.confluences
     graph.flux = hyd.flux
-    print(f"Wrote biomes: {biomes_path}")
+    if biomes_path:
+        print(f"Wrote biomes: {biomes_path}")
 
     # Cultures
     culture_gen = CultureGenerator(graph, feat, biome_classifier)
@@ -152,10 +200,12 @@ def main() -> None:
     # Expose population/suitability on graph for downstream modules
     graph.cell_population = cell_population
     graph.cell_suitability = cell_suitability
-    from py_fmg.exporter_geojson import export_cell_cultures_geojson, export_cultures_points_geojson
-    cell_cultures_path = export_cell_cultures_geojson(graph, cell_cultures, cultures, out_root, map_id)
-    cultures_points_path = export_cultures_points_geojson(graph, cultures, out_root, map_id)
-    print(f"Wrote cultures: {cultures_points_path}")
+    from py_fmg.exporter_geojson import export_cell_cultures_geojson, export_cultures_points_geojson, build_cell_cultures_fc, build_cultures_points_fc
+    cell_cultures_path = cultures_points_path = None
+    if geojson_enabled:
+        cell_cultures_path = export_cell_cultures_geojson(graph, cell_cultures, cultures, out_root, geojson_basename)
+        cultures_points_path = export_cultures_points_geojson(graph, cultures, out_root, geojson_basename)
+        print(f"Wrote cultures: {cultures_points_path}")
 
     # Burgs (settlements) - minimal placement using settlement system
     # Wrap cultures to match expected interface in Settlements
@@ -183,72 +233,107 @@ def main() -> None:
         options=settlement_opts,
     )
     settlements, states = settlements_engine.generate()
-    from py_fmg.exporter_geojson import export_burgs_points_geojson
-    burgs_path = export_burgs_points_geojson(settlements, out_root, map_id)
-    print(f"Wrote burgs: {burgs_path}")
+    from py_fmg.exporter_geojson import export_burgs_points_geojson, build_burgs_points_fc
+    burgs_path = None
+    if geojson_enabled:
+        burgs_path = export_burgs_points_geojson(settlements, out_root, geojson_basename)
+        print(f"Wrote burgs: {burgs_path}")
 
     # Also write a small manifest with basic metadata
-    manifest_dir = out_root / "geojson" / map_id
-    manifest = {
-        "map_id": map_id,
-        "width": args.width,
-        "height": args.height,
-        "cells_desired": args.cells,
-        "seed": args.seed,
-        "artifacts": {"cells": str(geo_path)},
-    }
-    manifest["artifacts"]["coastlines"] = str(coast_path)
-    manifest["artifacts"]["watermask"] = str(watermask_path)
-    manifest["artifacts"]["climate"] = str(climate_path)
-    manifest["artifacts"]["biomes"] = str(biomes_path)
-    manifest["artifacts"]["rivers"] = str(rivers_path)
-    manifest["artifacts"]["rivers_smooth"] = str(rivers_smooth_path)
-    manifest["artifacts"]["cultures_cells"] = str(cell_cultures_path)
-    manifest["artifacts"]["cultures_points"] = str(cultures_points_path)
-    manifest["artifacts"]["burgs"] = str(burgs_path)
-    (manifest_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Wrote manifest: {manifest_dir / 'manifest.json'}")
+    if geojson_enabled:
+        manifest_dir = out_root / "geojson" / geojson_basename
+        manifest = {
+            "map_id": geojson_basename,
+            "width": args.width,
+            "height": args.height,
+            "cells_desired": args.cells,
+            "seed": args.seed,
+            "artifacts": {},
+        }
+        if geo_path:
+            manifest["artifacts"]["cells"] = str(geo_path)
+        if coast_path:
+            manifest["artifacts"]["coastlines"] = str(coast_path)
+        if watermask_path:
+            manifest["artifacts"]["watermask"] = str(watermask_path)
+        if climate_path:
+            manifest["artifacts"]["climate"] = str(climate_path)
+        if biomes_path:
+            manifest["artifacts"]["biomes"] = str(biomes_path)
+        if rivers_path:
+            manifest["artifacts"]["rivers"] = str(rivers_path)
+        if rivers_smooth_path:
+            manifest["artifacts"]["rivers_smooth"] = str(rivers_smooth_path)
+        manifest["artifacts"]["cultures_cells"] = str(cell_cultures_path)
+        manifest["artifacts"]["cultures_points"] = str(cultures_points_path)
+        manifest["artifacts"]["burgs"] = str(burgs_path)
+        (manifest_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"Wrote manifest: {manifest_dir / 'manifest.json'}")
 
     # Write a simple Leaflet preview with inlined GeoJSON
-    try:
-        fc = json.loads(geo_path.read_text(encoding="utf-8"))
-        preview_dir = out_root / "preview"
-        html_path = preview_dir / f"{map_id}_cells.html"
-        write_inline_leaflet(fc, html_path, title=f"Cells Preview — {map_id}", width=args.preview_width, height=args.preview_height)
-        print(f"Wrote preview: {html_path}")
+    if preview_enabled:
+        try:
+            preview_name = preview_basename
+            preview_dir = out_root / "preview"
+            html2 = preview_dir / f"{preview_name}_layers.html"
+            # Multi-layer only (cells inline removed per request)
+            if not geojson_enabled:
+                # Build all layers in-memory without writing to disk
+                fc = build_cells_fc(graph, preview_name)
+                coast_fc = build_coastlines_fc(graph, preview_name)
+                climate_fc = build_climate_fc(graph, graph.temperatures, graph.precipitation, preview_name)
+                biomes_fc = build_biomes_fc(graph, cell_biomes, biome_classifier, preview_name)
+                watermask_fc = build_watermask_fc(graph, preview_name)
+                rivers_fc = build_rivers_fc(graph, rivers, preview_name)
+                rivers_smooth_fc = build_rivers_smooth_fc(graph, rivers, preview_name)
+            else:
+                fc = json.loads(Path(geo_path).read_text(encoding='utf-8')) if geo_path else {"type":"FeatureCollection","features":[]}
+                coast_fc = json.loads(Path(coast_path).read_text(encoding='utf-8')) if coast_path else {"type":"FeatureCollection","features":[]}
+                climate_fc = json.loads(Path(climate_path).read_text(encoding='utf-8')) if climate_path else {"type":"FeatureCollection","features":[]}
+                biomes_fc = json.loads(Path(biomes_path).read_text(encoding='utf-8')) if biomes_path else {"type":"FeatureCollection","features":[]}
+                watermask_fc = json.loads(Path(watermask_path).read_text(encoding='utf-8')) if watermask_path else {"type":"FeatureCollection","features":[]}
+                rivers_fc = json.loads(Path(rivers_path).read_text(encoding='utf-8')) if rivers_path else {"type":"FeatureCollection","features":[]}
+                rivers_smooth_fc = json.loads(Path(rivers_smooth_path).read_text(encoding='utf-8')) if rivers_smooth_path else {"type":"FeatureCollection","features":[]}
+            # Cultures and burgs (optional)
+            if not geojson_enabled:
+                cultures_cells_fc = build_cell_cultures_fc(graph, cell_cultures, cultures, preview_name)
+                burgs_fc = build_burgs_points_fc(settlements, preview_name)
+            else:
+                cultures_cells_fc = json.loads(Path(cell_cultures_path).read_text(encoding='utf-8')) if cell_cultures_path else {"type":"FeatureCollection","features":[]}
+                burgs_fc = json.loads(Path(burgs_path).read_text(encoding='utf-8')) if burgs_path else {"type":"FeatureCollection","features":[]}
 
-        # Multi-layer preview
-        with open(coast_path, 'r', encoding='utf-8') as f2:
-            coast_fc = json.load(f2)
-        html2 = preview_dir / f"{map_id}_layers.html"
-        write_inline_leaflet_multi(
-            {
-                "cells": fc,
-                "climate": json.loads(Path(climate_path).read_text(encoding='utf-8')),
-                "biomes": json.loads(Path(biomes_path).read_text(encoding='utf-8')),
-                "cultures_cells": json.loads(Path(cell_cultures_path).read_text(encoding='utf-8')),
-                "watermask": json.loads(Path(watermask_path).read_text(encoding='utf-8')),
-                "rivers": json.loads(Path(rivers_path).read_text(encoding='utf-8')),
-                "burgs": json.loads(Path(burgs_path).read_text(encoding='utf-8')),
-                "rivers_smooth": json.loads(Path(rivers_smooth_path).read_text(encoding='utf-8')),
-                "coastlines": coast_fc
-            },
-            html2,
-            title=f"Map Preview — {map_id}",
-            width=args.preview_width,
-            height=args.preview_height,
-        )
-        print(f"Wrote preview: {html2}")
-    except Exception as e:
-        print(f"Could not write preview HTML: {e}")
+            # Compute preview size (scaled)
+            p_w = max(1, int(round(float(args.width) * float(args.preview_scale))))
+            p_h = max(1, int(round(float(args.height) * float(args.preview_scale))))
+            write_inline_leaflet_multi(
+                {
+                    "cells": fc,
+                    "climate": climate_fc,
+                    "biomes": biomes_fc,
+                    "cultures_cells": cultures_cells_fc,
+                    "watermask": watermask_fc,
+                    "rivers": rivers_fc,
+                    "burgs": burgs_fc,
+                    "rivers_smooth": rivers_smooth_fc,
+                    "coastlines": coast_fc
+                },
+                html2,
+                title=f"Map Preview — {preview_name}",
+                width=p_w,
+                height=p_h,
+            )
+            print(f"Wrote preview: {html2}")
+        except Exception as e:
+            print(f"Could not write preview HTML: {e}")
 
     # Optional: FMG .map export
-    if args.export_map:
+    if args.export_map is not None:
         try:
             # Build rivers JSON if available
             rivers_json = None
             try:
-                rivers_json = json.loads(Path(rivers_path).read_text(encoding="utf-8"))['features']
+                if rivers_path:
+                    rivers_json = json.loads(Path(rivers_path).read_text(encoding="utf-8"))['features']
                 # Convert features back to FMG-like river objects with id & cells
                 rivers_json = [
                     {
@@ -264,8 +349,12 @@ def main() -> None:
             except Exception:
                 rivers_json = []
 
+            # Choose default export filename if not provided
+            export_path = args.export_map
+            if export_path == "":
+                export_path = str(out_root / f"{default_basename}.map")
             export_fmg_map(
-                args.export_map,
+                export_path,
                 graph,
                 map_name=f"Map {map_id}",
                 seed=args.seed or map_id,
@@ -277,7 +366,7 @@ def main() -> None:
                 features_list=feat.features,
                 minimal=args.export_map_minimal,
             )
-            print(f"Wrote FMG map: {args.export_map}")
+            print(f"Wrote FMG map: {export_path}")
         except Exception as e:
             print(f"FMG map export failed: {e}")
 

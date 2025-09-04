@@ -59,31 +59,28 @@ class ClimateOptions:
 
     def __post_init__(self):
         if self.winds is None:
-            # Default wind angles by tier (0-5 from N to S)
-            # Based on prevailing winds: polar easterlies, westerlies, trade winds
+            # FMG default wind angles by tier (0..5 from N to S)
+            # See modules/ui/world-configurator.js restoreDefaultWinds
             self.winds = [
-                225,  # Tier 0: Polar easterlies (NE to SW)
-                135,  # Tier 1: Westerlies (SE to NW)
-                225,  # Tier 2: Trade winds (NE to SW)
-                225,  # Tier 3: Trade winds (NE to SW)
-                135,  # Tier 4: Westerlies (SE to NW)
-                225,  # Tier 5: Polar easterlies (NE to SW)
+                225,
+                45,
+                225,
+                315,
+                135,
+                315,
             ]
 
         if self.latitude_precipitation_modifiers is None:
-            # Precipitation modifiers based on atmospheric circulation cells
-            # (Hadley, Ferrel, Polar cells affect precipitation patterns)
+            # FMG default precipitation modifiers by latitude band
             self.latitude_precipitation_modifiers = [
-                4.0,    # 0-5°: Wet all year (ITCZ)
-                2.0, 2.0, # 5-20°: Wet summer, dry winter
-                1.0, 1.0, # 20-30°: Dry all year (descending air)
-                2.0, 2.0, # 30-40°: Wet winter, dry summer
-                2.0, 2.0, # 40-50°: Wet winter, dry summer
-                3.0, 3.0, # 50-60°: Wet all year
-                2.0, 2.0, # 60-70°: Wet summer, dry winter
-                1.0, 1.0, # 70-80°: Dry all year
-                1.0,      # 80-85°: Dry all year
-                0.5       # 85-90°: Very dry
+                4.0,              # 0-5°: Wet all year (ITCZ)
+                2.0, 2.0, 2.0,    # 5-20°: Wet summer, dry winter
+                1.0, 1.0,         # 20-30°: Dry all year
+                2.0, 2.0, 2.0, 2.0,  # 30-50°: Wet winter, dry summer
+                3.0, 3.0,         # 50-60°: Wet all year
+                2.0, 2.0,         # 60-70°: Wet summer, dry winter
+                1.0, 1.0, 1.0,    # 70-85°: Dry all year
+                0.5               # 85-90°: Very dry
             ]
 
 
@@ -235,8 +232,8 @@ class Climate:
 
         # Define wind directions based on latitude
         for c in range(0, n_cells, cells_x):
+            # FMG uses row index for precipitation latitude bands
             row_idx = c // cells_x
-            y = self.graph.points[c][1]
             lat = self.map_coords.lat_n - (row_idx / cells_y) * self.map_coords.lat_t
 
             # Latitude band for precipitation modifier
@@ -263,9 +260,9 @@ class Climate:
 
         # Pass winds across the map using configurable base precipitation
         if westerly:
-            self._pass_wind(westerly, self.options.base_precipitation_west * modifier, 1, cells_x)
+            self._pass_wind(westerly, self.options.base_precipitation_west * modifier, 1, cells_x, modifier)
         if easterly:
-            self._pass_wind(easterly, self.options.base_precipitation_west * modifier, -1, cells_x)
+            self._pass_wind(easterly, self.options.base_precipitation_west * modifier, -1, cells_x, modifier)
 
         # Vertical winds
         vert_total = southerly + northerly
@@ -275,7 +272,7 @@ class Climate:
             lat_mod_n = latitude_modifier[band_n] if self.map_coords.lat_t <= 60 else np.mean(latitude_modifier)
             max_prec_n = (northerly / vert_total) * self.options.base_precipitation_vertical * modifier * lat_mod_n
             north_range = list(range(0, min(cells_x, n_cells)))  # Bound check
-            self._pass_wind(north_range, max_prec_n, cells_x, cells_y)
+            self._pass_wind(north_range, max_prec_n, cells_x, cells_y, modifier)
 
         if southerly and vert_total > 0:
             band_s = int((abs(self.map_coords.lat_s) - 1) / 5)
@@ -284,7 +281,7 @@ class Climate:
             max_prec_s = (southerly / vert_total) * self.options.base_precipitation_vertical * modifier * lat_mod_s
             south_start = max(0, n_cells - cells_x)  # Bound check
             south_range = list(range(south_start, n_cells))
-            self._pass_wind(south_range, max_prec_s, -cells_x, cells_y)
+            self._pass_wind(south_range, max_prec_s, -cells_x, cells_y, modifier)
 
         # Store on graph
         self.graph.precipitation = self.precipitation
@@ -300,7 +297,7 @@ class Climate:
 
         return is_west, is_east, is_north, is_south
 
-    def _pass_wind(self, source: List, max_prec: float, next_step: int, steps: int):
+    def _pass_wind(self, source: List, max_prec: float, next_step: int, steps: int, modifier: float):
         """
         Simulate wind passing across terrain, depositing precipitation.
         
@@ -344,10 +341,11 @@ class Climate:
                             precip = max(humidity / np.random.randint(*self.options.coastal_precip_range), 1)
                             self.precipitation[next_cell] += int(min(precip, 255 - self.precipitation[next_cell]))
                         else:
-                            # Wind gains humidity over water using configurable values
-                            humidity = min(humidity + self.options.water_humidity_gain * self.options.precipitation_modifier, max_prec)
-                            water_precip = int(self.options.water_precipitation * self.options.precipitation_modifier)
-                            self.precipitation[current] += min(water_precip, 255 - self.precipitation[current])
+                            # Wind gains humidity over water (FMG parity)
+                            humidity = min(humidity + 5.0 * modifier, max_prec)
+                            water_precip = 5.0 * modifier
+                            inc = int(min(water_precip, 255 - self.precipitation[current]))
+                            self.precipitation[current] += inc
                     current += next_step
                     continue
 
@@ -357,7 +355,7 @@ class Climate:
                     is_passable = self.graph.heights[next_cell] <= max_passable_elevation
 
                     if is_passable:
-                        precipitation = self._get_precipitation(humidity, current, next_step)
+                        precipitation = self._get_precipitation(humidity, current, next_step, modifier)
                     else:
                         precipitation = humidity  # All humidity drops at impassable terrain
 
@@ -373,14 +371,14 @@ class Climate:
 
                 current += next_step
 
-    def _get_precipitation(self, humidity: float, cell_idx: int, next_step: int) -> float:
+    def _get_precipitation(self, humidity: float, cell_idx: int, next_step: int, modifier: float) -> float:
         """
         Calculate precipitation based on humidity and terrain.
         
         Includes orographic effects (increased precipitation on windward slopes).
         """
-        # Normal precipitation loss using configurable divisor
-        normal_loss = max(humidity / (self.options.precipitation_base_divisor * self.options.precipitation_modifier), 1)
+        # Normal precipitation loss (FMG: humidity / (10 * modifier))
+        normal_loss = max(humidity / (10.0 * modifier), 1)
 
         # Orographic effect
         next_idx = cell_idx + next_step

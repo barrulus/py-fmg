@@ -1,29 +1,75 @@
 #!/bin/bash
+
+# ------------------------------------------------------------
+# py-fmg CLI switches reference (single source of truth)
+# ------------------------------------------------------------
+# Core map params
+# --width <float>              : Map width (px) (default: 1000)
+# --height <float>             : Map height (px) (default: 800)
+# --cells <int>                : Target number of cells (default: 10000)
+# --seed <str>                 : Random seed (string) (default: None)
+# --out <path>                 : Output directory root (default: out)
+# --template <str>             : Heightmap template name (default: continents)
+# --target-land <0..1>         : Target land fraction; auto-shift sea level (default: None)
+
+# Preview
+# --preview [basename]         : Generate Leaflet layers preview (default size from --width/--height). Optional basename; defaults to {template}_{timestamp}. (default: disabled)
+# --preview-scale <float>      : Scale factor for preview size (default: 1.0)
+# --no-relax                   : Disable Lloyd relaxation (flag) (default: false)
+
+# FMG .map export
+# --export-map [path]          : Export FMG .map (optional path). Defaults to {template}_{timestamp}.map under --out when flag is present (default: disabled)
+# --export-map-minimal         : Minimal .map with safe defaults (flag) (default: false)
+
+# Hydrology
+# --min-river-flux <float>     : Minimum flux to form a visible river (default: 30.0)
+# --precip-mult <float>        : Multiplier for precipitation in hydrology (default: 1.0)
+# --snap-to-coast-steps <int>  : Steps to snap river mouths to coast (default: 3)
+
+# Climate tuning
+# --equator-temp <float>       : Sea-level temperature at equator (°C) (default: None)
+# --tropical-gradient <float>  : Temperature drop per degree latitude in tropics (°C/°) (default: None)
+# --itcz-width <float>         : ITCZ half-width around equator (degrees) (default: None)
+# --itcz-boost <float>         : ITCZ precipitation multiplier within band (default: None)
+
+# GeoJSON export
+# --geojson [basename]         : Write GeoJSON artifacts (optional basename; defaults to {template}_{timestamp}). If omitted, no GeoJSON is written (default: disabled)
+
+# Settlements and states
+# --states-number <int>        : Target number of states (capitals) (default: 30)
+# --burgs-number <int>         : Target number of towns (1000 = auto) (default: 1000)
+# --town-spacing-base <int>    : Base divisor for town spacing (lower = more towns) (default: 150)
+# --town-spacing-power <float> : Power adjustment for town spacing (lower = more towns) (default: 0.7)
+# --urbanization-rate <float>  : Urbanization rate (0..1) used for settlement sizing (default: 0.1)
+
+# Notes:
+# - Boolean flags have no value (e.g., --no-relax, --export-map-minimal).
+# - Combine hydrology and climate switches to shape river patterns (e.g., ITCZ boost).
+
 python cli/main.py \
   --width 1400 \
   --height 800 \
   --cells 50000 \
-  --seed continents3 \
+  --seed 987654321 \
   --template continents \
-  --preview-width 1400 \
-  --preview-height 800 \
-  --burgs-number 3000 \
-  --min-river-flux 20 \
-  --precip-mult 1.5 \
-  --snap-to-coast-steps 5
+  --preview \
+  --burgs-number 3000
+  # --snap-to-coast-steps 5
 
-  # --export-map out/geojson/continents.map
-  # --burgs-number: target number of towns; 1000 means “auto” based on map size. Set a larger explicit number to force more towns.
-  # --states-number: number of capitals/states to seed.
-  # --town-spacing-base: lower this to reduce minimum spacing between towns (more towns fit).
-  # --town-spacing-power: adjust spacing scaling; lower slightly to allow more towns.
-  # --urbanization-rate: controls population share in towns (doesn’t change count directly, but affects sizes).
-  # --min-river-flux: keep default 30.0 (you can lower to increase headwaters)
-  # --precip-mult: e.g., 1.2–1.5 to increase flux and river persistence
-  # --snap-to-coast-steps: default 3; increase to 4–5 if you still see inland terminations near the coast
-  ## Examples
+  # Optional example toggles
+  # --target-land 0.45 \
+  # --no-relax \
+  # --equator-temp 23 \
+  # --tropical-gradient 0.15 \
+  # --itcz-width 15 \
+  # --itcz-boost 1.8 \
+  # --states-number 45 \
+  # --town-spacing-base 120 \
+  # --town-spacing-power 0.65 \
+  # --urbanization-rate 0.12 \
+  # --export-map  # writes to default {template}_{timestamp}.map under --out
 
-  ## More towns at 10k cells, same states:
-  # --burgs-number 800 --town-spacing-base 120
-  ## Many more towns and states:
-  # --states-number 45 --burgs-number 1200 --town-spacing-base 120 --town-spacing-power 0.6
+# Quick tips
+# - For more headwaters: lower --min-river-flux (e.g., 20) and increase --precip-mult (1.2–1.5).
+# - For wetter tropics: increase --itcz-boost (1.5–2.0) and widen --itcz-width (12–20).
+# - For more towns: increase --burgs-number and lower --town-spacing-base.

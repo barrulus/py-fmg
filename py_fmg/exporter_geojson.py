@@ -61,32 +61,21 @@ def _cell_polygon(graph: VoronoiGraph, cell_id: int) -> List[List[float]]:
     return ring
 
 
-def export_cells_geojson(
+def build_cells_fc(
     graph: VoronoiGraph,
-    out_dir: str | os.PathLike,
     map_id: str,
     include_heights: bool = True,
-) -> Path:
-    """Export Voronoi cells as a GeoJSON FeatureCollection.
-
-    - geometry: Polygon (Voronoi cell)
-    - properties: cell_id, neighbors, border, centroid, height (optional)
-    """
-    out_dir = Path(out_dir)
-    layer_dir = out_dir / "geojson" / map_id
-    layer_dir.mkdir(parents=True, exist_ok=True)
-
+) -> Dict[str, Any]:
+    """Build Voronoi cells FeatureCollection (no write)."""
     features: List[Dict[str, Any]] = []
     for i in range(len(graph.points)):
         ring = _cell_polygon(graph, i)
         if not ring:
-            # skip invalid geometry; downstream can optionally handle as Point
             continue
 
         centroid_x = float(np.mean([p[0] for p in ring[:-1]]))  # exclude duplicate last point
         centroid_y = float(np.mean([p[1] for p in ring[:-1]]))
 
-        # Ensure all numeric props are Python builtins for JSON
         neighbors = graph.cell_neighbors[i] if i < len(graph.cell_neighbors) else []
         neighbors = [int(n) for n in neighbors]
 
@@ -115,7 +104,25 @@ def export_cells_geojson(
             }
         )
 
-    fc = {"type": "FeatureCollection", "features": features}
+    return {"type": "FeatureCollection", "features": features}
+
+
+def export_cells_geojson(
+    graph: VoronoiGraph,
+    out_dir: str | os.PathLike,
+    map_id: str,
+    include_heights: bool = True,
+) -> Path:
+    """Export Voronoi cells as a GeoJSON FeatureCollection.
+
+    - geometry: Polygon (Voronoi cell)
+    - properties: cell_id, neighbors, border, centroid, height (optional)
+    """
+    out_dir = Path(out_dir)
+    layer_dir = out_dir / "geojson" / map_id
+    layer_dir.mkdir(parents=True, exist_ok=True)
+
+    fc = build_cells_fc(graph, map_id, include_heights)
     out_path = layer_dir / "cells.geojson"
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(fc, f, ensure_ascii=False)
@@ -186,6 +193,49 @@ def export_coastlines_geojson(
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(fc, f, ensure_ascii=False)
     return out_path
+
+
+def build_coastlines_fc(graph: VoronoiGraph, map_id: str) -> Dict[str, Any]:
+    """Build coastline MultiLineString FC without writing to disk."""
+    seg_keys = set()
+    segments: List[List[List[float]]] = []
+
+    n = len(graph.points)
+    is_land = [False] * n
+    if getattr(graph, "heights", None) is not None:
+        is_land = [bool(int(h) >= 20) for h in graph.heights[:n]]
+
+    for i in range(n):
+        for j in graph.cell_neighbors[i]:
+            if j <= i:
+                continue
+            if is_land[i] == is_land[j]:
+                continue
+            candidates = []
+            for v in graph.cell_vertices[i]:
+                if j in graph.vertex_cells[v]:
+                    candidates.append(v)
+            if len(candidates) < 2:
+                continue
+            v1, v2 = candidates[0], candidates[1]
+            key = tuple(sorted((v1, v2)))
+            if key in seg_keys:
+                continue
+            seg_keys.add(key)
+            p1 = graph.vertex_coordinates[v1]
+            p2 = graph.vertex_coordinates[v2]
+            segments.append([[float(p1[0]), float(p1[1])], [float(p2[0]), float(p2[1])]])
+
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "MultiLineString", "coordinates": segments},
+                "properties": {"map_id": map_id, "layer": "coastlines"},
+            }
+        ],
+    }
 
 
 def export_watermask_geojson(
@@ -264,6 +314,57 @@ def export_watermask_geojson(
     return out_path
 
 
+def build_watermask_fc(graph: VoronoiGraph, map_id: str) -> Dict[str, Any]:
+    """Build watermask FeatureCollection without writing to disk."""
+    features: List[Dict[str, Any]] = []
+
+    feature_types: Dict[int, str] = {}
+    if getattr(graph, "features", None) is not None and getattr(graph, "feature_ids", None) is not None:
+        for f in graph.features:
+            if not f:
+                continue
+            feature_types[int(f.id)] = str(f.type)
+
+    n = len(graph.points)
+    for i in range(n):
+        ring = _cell_polygon(graph, i)
+        if not ring:
+            continue
+        h = int(graph.heights[i]) if getattr(graph, "heights", None) is not None else 0
+        is_land = bool(h >= 20)
+        is_coast = False
+        if getattr(graph, "distance_field", None) is not None:
+            df = int(graph.distance_field[i])
+            is_coast = df in (1, -1)
+
+        is_ocean = False
+        is_lake = False
+        if feature_types and getattr(graph, "feature_ids", None) is not None:
+            fid = int(graph.feature_ids[i]) if i < len(graph.feature_ids) else 0
+            ftype = feature_types.get(fid, None)
+            is_ocean = ftype == "ocean"
+            is_lake = ftype == "lake"
+        else:
+            is_ocean = (not is_land) and bool(graph.cell_border_flags[i])
+            is_lake = (not is_land) and (not is_ocean)
+
+        props = {
+            "map_id": map_id,
+            "cell_id": i,
+            "is_land": is_land,
+            "is_ocean": is_ocean,
+            "is_lake": is_lake,
+            "is_coast": is_coast,
+        }
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "properties": props,
+        })
+
+    return {"type": "FeatureCollection", "features": features}
+
+
 def export_climate_geojson(
     graph: VoronoiGraph,
     temperatures: np.ndarray,
@@ -298,6 +399,32 @@ def export_climate_geojson(
     out_path = layer_dir / "cells_climate.geojson"
     out_path.write_text(json.dumps(fc, ensure_ascii=False), encoding="utf-8")
     return out_path
+
+
+def build_climate_fc(
+    graph: VoronoiGraph,
+    temperatures: np.ndarray,
+    precipitation: np.ndarray,
+    map_id: str,
+) -> Dict[str, Any]:
+    features: List[Dict[str, Any]] = []
+    n = len(graph.points)
+    for i in range(n):
+        ring = _cell_polygon(graph, i)
+        if not ring:
+            continue
+        props = {
+            "map_id": map_id,
+            "cell_id": int(i),
+            "temperature": float(temperatures[i]) if i < len(temperatures) else None,
+            "precipitation": float(precipitation[i]) if i < len(precipitation) else None,
+        }
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "properties": props,
+        })
+    return {"type": "FeatureCollection", "features": features}
 
 
 def export_biomes_geojson(
@@ -336,6 +463,34 @@ def export_biomes_geojson(
     out_path = layer_dir / "cells_biomes.geojson"
     out_path.write_text(json.dumps(fc, ensure_ascii=False), encoding="utf-8")
     return out_path
+
+
+def build_biomes_fc(
+    graph: VoronoiGraph,
+    biome_ids: np.ndarray,
+    classifier: BiomeClassifier,
+    map_id: str,
+) -> Dict[str, Any]:
+    features: List[Dict[str, Any]] = []
+    n = len(graph.points)
+    for i in range(n):
+        ring = _cell_polygon(graph, i)
+        if not ring:
+            continue
+        bid = int(biome_ids[i]) if i < len(biome_ids) else 0
+        props = {
+            "map_id": map_id,
+            "cell_id": int(i),
+            "biome_id": bid,
+            "biome_name": classifier.get_biome_name(bid),
+            "color": classifier.get_biome_color(bid),
+        }
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "properties": props,
+        })
+    return {"type": "FeatureCollection", "features": features}
 
 
 def export_rivers_geojson(
@@ -387,6 +542,37 @@ def export_rivers_geojson(
     return out_path
 
 
+def build_rivers_fc(graph: VoronoiGraph, rivers: Dict[int, Any], map_id: str) -> Dict[str, Any]:
+    feats: List[Dict[str, Any]] = []
+    for rid, river in rivers.items():
+        cells = getattr(river, "cells", [])
+        if not cells or len(cells) < 2:
+            continue
+        coords: List[List[float]] = []
+        for c in cells:
+            if c < 0 or c >= len(graph.points):
+                continue
+            p = graph.points[c]
+            coords.append([float(p[0]), float(p[1])])
+        if len(coords) < 2:
+            continue
+        props = {
+            "map_id": map_id,
+            "river_id": int(rid),
+            "discharge": float(getattr(river, "discharge", 0.0)),
+            "width": float(getattr(river, "width", 0.0)),
+            "length": float(getattr(river, "length", 0.0)),
+            "source_distance": float(getattr(river, "source_distance", 0.0)),
+            "cells": [int(x) for x in cells],
+        }
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": coords},
+            "properties": props,
+        })
+    return {"type": "FeatureCollection", "features": feats}
+
+
 def export_cell_cultures_geojson(
     graph: VoronoiGraph,
     cell_cultures: np.ndarray,
@@ -427,6 +613,36 @@ def export_cell_cultures_geojson(
     return out_path
 
 
+def build_cell_cultures_fc(
+    graph: VoronoiGraph,
+    cell_cultures: np.ndarray,
+    cultures: Dict[int, Culture],
+    map_id: str,
+) -> Dict[str, Any]:
+    feats: List[Dict[str, Any]] = []
+    n = len(graph.points)
+    for i in range(n):
+        ring = _cell_polygon(graph, i)
+        if not ring:
+            continue
+        cid = int(cell_cultures[i]) if i < len(cell_cultures) else 0
+        c = cultures.get(cid)
+        props = {
+            "map_id": map_id,
+            "cell_id": i,
+            "culture_id": cid,
+            "culture_name": getattr(c, "name", f"Culture {cid}") if c else f"Culture {cid}",
+            "color": getattr(c, "color", "#888888") if c else "#888888",
+            "type": getattr(c, "type", "Generic") if c else "Generic",
+        }
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "properties": props,
+        })
+    return {"type": "FeatureCollection", "features": feats}
+
+
 def export_cultures_points_geojson(
     graph: VoronoiGraph,
     cultures: Dict[int, Culture],
@@ -465,6 +681,34 @@ def export_cultures_points_geojson(
     return out_path
 
 
+def build_cultures_points_fc(
+    graph: VoronoiGraph,
+    cultures: Dict[int, Culture],
+    map_id: str,
+) -> Dict[str, Any]:
+    feats: List[Dict[str, Any]] = []
+    for cid, c in cultures.items():
+        center = int(getattr(c, "center", 0))
+        if 0 <= center < len(graph.points):
+            x, y = graph.points[center]
+        else:
+            x, y = 0.0, 0.0
+        props = {
+            "map_id": map_id,
+            "culture_id": int(cid),
+            "name": getattr(c, "name", f"Culture {cid}"),
+            "color": getattr(c, "color", "#888888"),
+            "type": getattr(c, "type", "Generic"),
+            "center_cell": center,
+        }
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [float(x), float(y)]},
+            "properties": props,
+        })
+    return {"type": "FeatureCollection", "features": feats}
+
+
 def export_burgs_points_geojson(
     settlements: Dict[int, Settlement],
     out_dir: str | os.PathLike,
@@ -495,6 +739,28 @@ def export_burgs_points_geojson(
     out_path = layer_dir / "burgs.geojson"
     out_path.write_text(json.dumps(fc, ensure_ascii=False), encoding="utf-8")
     return out_path
+
+
+def build_burgs_points_fc(
+    settlements: Dict[int, Settlement],
+    map_id: str,
+) -> Dict[str, Any]:
+    feats: List[Dict[str, Any]] = []
+    for sid, s in settlements.items():
+        props = {
+            "map_id": map_id,
+            "burg_id": int(sid),
+            "name": s.name,
+            "population": float(s.population),
+            "is_capital": bool(s.is_capital),
+            "state_id": int(s.state_id),
+        }
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [float(s.x), float(s.y)]},
+            "properties": props,
+        })
+    return {"type": "FeatureCollection", "features": feats}
 
 
 def _shared_edge_midpoint(graph: VoronoiGraph, a: int, b: int) -> List[float]:
@@ -643,3 +909,47 @@ def export_rivers_smooth_geojson(
     out_path = layer_dir / "rivers_smooth.geojson"
     out_path.write_text(json.dumps(fc, ensure_ascii=False), encoding="utf-8")
     return out_path
+
+
+def build_rivers_smooth_fc(
+    graph: VoronoiGraph,
+    rivers: Dict[int, Any],
+    map_id: str,
+    alpha: float = 0.5,
+    segments_per_edge: int = 8,
+) -> Dict[str, Any]:
+    feats: List[Dict[str, Any]] = []
+    for rid, river in rivers.items():
+        cells = getattr(river, "cells", [])
+        if not cells or len(cells) < 2:
+            continue
+        waypoints: List[List[float]] = []
+        p0 = graph.points[cells[0]]
+        waypoints.append([float(p0[0]), float(p0[1])])
+        for i in range(len(cells) - 1):
+            a, b = cells[i], cells[i + 1]
+            mid = _shared_edge_midpoint(graph, a, b)
+            if not waypoints or mid != waypoints[-1]:
+                waypoints.append(mid)
+        p_last = graph.points[cells[-1]]
+        last = [float(p_last[0]), float(p_last[1])]
+        if waypoints[-1] != last:
+            waypoints.append(last)
+        smooth = _catmull_rom_spline(waypoints, alpha=alpha, segments=segments_per_edge)
+        if len(smooth) < 2:
+            continue
+        props = {
+            "map_id": map_id,
+            "river_id": int(rid),
+            "discharge": float(getattr(river, "discharge", 0.0)),
+            "width": float(getattr(river, "width", 0.0)),
+            "length": float(getattr(river, "length", 0.0)),
+            "source_distance": float(getattr(river, "source_distance", 0.0)),
+            "cells": [int(x) for x in cells],
+        }
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": smooth},
+            "properties": props,
+        })
+    return {"type": "FeatureCollection", "features": feats}
