@@ -43,6 +43,7 @@ coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
+Fantasy-Map-Generator/
 
 # IDEs
 .idea/

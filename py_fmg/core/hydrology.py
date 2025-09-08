@@ -13,7 +13,7 @@ Process:
 
 import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import structlog
@@ -40,6 +40,14 @@ class HydrologyOptions:
     # Controls to improve continuity without lowering counts
     precip_multiplier: float = 1.0  # Multiply precipitation when adding flux
     snap_to_coast_steps: int = 3    # BFS steps to snap river mouths to coast
+    
+    # Topography guidance
+    topo_guided_flow: bool = True   # Use local gradient to guide neighbor choice
+    uphill_penalty: float = 50.0    # Cost weight when extending mouths uphill (for coast path)
+    lake_evaporation_factor: float = 0.3  # Evaporation ~ area * factor (lower -> more outflow)
+    
+    # Parity width heuristic
+    parity_width: bool = False  # If True, use FMG-like discrete width bins for display
 
 
 @dataclass
@@ -52,6 +60,10 @@ class RiverData:
     width: float = 0.0
     length: float = 0.0
     source_distance: float = 0.0
+    # Meandering geometry
+    path_points: List[Tuple[float, float]] = field(default_factory=list)
+    path_widths: List[float] = field(default_factory=list)
+    polygon: Optional[List[List[float]]] = None
 
 
 class Hydrology:
@@ -375,49 +387,19 @@ class Hydrology:
 
 
     def _define_lake_climate_data(self) -> Dict[int, List]:
-        """
-        Pre-calculate lake outlets and climate data (equivalent to Lakes.defineClimateData).
-        
-        Returns:
-            Dictionary mapping outlet cell IDs to list of lakes that drain through them
-        """
-        lake_out_cells = {}
-
-        if not hasattr(self.features, 'features'):
-            return lake_out_cells
-
-        # Process each lake feature
-        for feature in self.features.features:
-            if not feature or not hasattr(feature, 'type') or feature.type != "lake":
-                continue
-
-            # Get lake cells
-            lake_cells = []
-            if hasattr(self.features, 'feature_ids') and self.features.feature_ids is not None:
-                for i, fid in enumerate(self.features.feature_ids):
-                    if fid == feature.id:
-                        lake_cells.append(i)
-
-            if not lake_cells:
-                continue
-
-            # Calculate lake properties
-            # Note: In FMG, flux is accumulated during the main loop, but we pre-calculate area/evaporation
-            lake_area = len(lake_cells)
-            feature.area = lake_area
-            feature.evaporation = lake_area * 2.0  # Simplified evaporation rate
-            feature.flux = 0  # Will be accumulated during main loop
-
-            # Find outlet cell
-            outlet_cell = self._find_lake_outlet(feature, lake_cells)
-            if outlet_cell is not None:
-                feature.outCell = outlet_cell
-                # Map outlet cell to lakes that drain through it
-                if outlet_cell not in lake_out_cells:
-                    lake_out_cells[outlet_cell] = []
-                lake_out_cells[outlet_cell].append(feature)
-
-        return lake_out_cells
+        """Pre-calc lake climate/outlets using FMG-parity logic from Lakes module."""
+        # Reuse precomputed mapping if API/CLI prepared it between Climate and Hydrology
+        try:
+            cached = getattr(self.graph, 'lake_out_cells', None)
+            if isinstance(cached, dict):
+                return cached
+        except Exception:
+            pass
+        try:
+            from .lakes import define_climate_data
+            return define_climate_data(self.graph, self.climate)
+        except Exception:
+            return {}
 
     def _find_lake_outlet(self, lake_feature, lake_cells: List[int]) -> Optional[int]:
         """Find the lowest point on lake perimeter for outlet."""
@@ -599,8 +581,9 @@ class Hydrology:
                 continue
 
             # Above river threshold - create/extend river
-            # Avoid starting rivers in permafrost cells
-            if is_permafrost(cell_id) or is_permafrost(target_cell):
+            # Policy: do not START rivers inside permafrost, but allow
+            # existing rivers to flow across permafrost toward the sea.
+            if is_permafrost(cell_id) and self.river_ids[cell_id] == 0:
                 continue
             if self.river_ids[cell_id] == 0:
                 # Create new river
@@ -616,67 +599,117 @@ class Hydrology:
             self._flow_down(target_cell, cell_flux, river_id)
 
     def _find_flow_target(self, cell_id: int) -> Optional[int]:
-        """Find the lowest neighbor to flow water to."""
+        """Select downstream neighbor, guided by local gradient when enabled."""
         neighbors = self._get_neighbors(cell_id)
         if not neighbors:
             return None
 
-        lowest_height = self.graph.heights[cell_id]
-        target_cell = None
+        h0 = self.graph.heights[cell_id]
 
-        for neighbor_id in neighbors:
-            neighbor_height = self.graph.heights[neighbor_id]
-            if neighbor_height < lowest_height:
-                lowest_height = neighbor_height
-                target_cell = neighbor_id
+        # Fast path: strictly lower neighbor exists → choose the one best aligned with descent
+        lower_neighbors = [n for n in neighbors if self.graph.heights[n] < h0]
+        if lower_neighbors:
+            if not self.options.topo_guided_flow:
+                # Choose steepest drop
+                return min(lower_neighbors, key=lambda n: self.graph.heights[n])
+            # Compute local descent direction from gradients
+            dx, dy = self._local_descent_vector(cell_id)
+            # Fallback to steepest if flat
+            if dx == 0.0 and dy == 0.0:
+                return min(lower_neighbors, key=lambda n: self.graph.heights[n])
+            # Pick neighbor with strong alignment and low height
+            best = None
+            best_score = None
+            px, py = self.graph.points[cell_id]
+            for n in lower_neighbors:
+                qx, qy = self.graph.points[n]
+                vx, vy = qx - px, qy - py
+                dist = math.hypot(vx, vy) or 1.0
+                ux, uy = vx / dist, vy / dist
+                align = max(0.0, (ux * dx + uy * dy))  # [0..1]
+                drop = max(0.0, float(h0 - self.graph.heights[n]))
+                score = drop + 0.5 * align
+                if best is None or score > best_score:
+                    best = n
+                    best_score = score
+            return best
 
-        if target_cell is not None:
-            return target_cell
-        # Epsilon descend: pick the lowest neighbor even if equal/higher to avoid stalls
-        min_h = None
-        min_id = None
-        for neighbor_id in neighbors:
-            nh = self.graph.heights[neighbor_id]
-            if min_h is None or nh < min_h or (nh == min_h and (min_id is None or neighbor_id < min_id)):
-                min_h = nh
-                min_id = neighbor_id
-        return min_id
+        # No lower neighbor: avoid climbing ridges; choose minimal ascent aligned with descent
+        best = None
+        best_cost = None
+        dx, dy = self._local_descent_vector(cell_id)
+        px, py = self.graph.points[cell_id]
+        for n in neighbors:
+            nh = float(self.graph.heights[n])
+            rise = max(0.0, nh - float(h0))
+            qx, qy = self.graph.points[n]
+            vx, vy = qx - px, qy - py
+            dist = math.hypot(vx, vy) or 1.0
+            ux, uy = vx / dist, vy / dist
+            align = max(0.0, (ux * dx + uy * dy))
+            # Penalize climbing; prefer moving along descent direction when forced
+            cost = rise + (1.0 - align) * 0.05
+            if best is None or cost < best_cost:
+                best = n
+                best_cost = cost
+        return best
 
     def _find_flow_target_excluding_lakes(self, cell_id: int, lake_ids: List[int]) -> Optional[int]:
-        """Find the lowest neighbor to flow water to, excluding cells in specified lakes."""
+        """Select downstream neighbor excluding lake cells, with topo guidance."""
         neighbors = self._get_neighbors(cell_id)
         if not neighbors:
             return None
 
-        # Filter out neighbors that belong to any of the specified lakes
-        filtered_neighbors = []
-        for neighbor_id in neighbors:
-            # Check if neighbor belongs to any excluded lake
-            in_excluded_lake = False
-            if (hasattr(self.features, 'feature_ids') and
-                self.features.feature_ids is not None and
-                neighbor_id < len(self.features.feature_ids)):
-                feature_id = self.features.feature_ids[neighbor_id]
-                if feature_id in lake_ids:
-                    in_excluded_lake = True
-
-            if not in_excluded_lake:
-                filtered_neighbors.append(neighbor_id)
-
-        if not filtered_neighbors:
+        # Exclude neighbors in given lakes
+        filtered = []
+        for nid in neighbors:
+            in_lake = False
+            if (
+                hasattr(self.features, 'feature_ids') and self.features.feature_ids is not None and
+                nid < len(self.features.feature_ids)
+            ):
+                fid = int(self.features.feature_ids[nid])
+                if fid in lake_ids:
+                    in_lake = True
+            if not in_lake:
+                filtered.append(nid)
+        if not filtered:
             return None
 
-        # Find lowest among filtered neighbors
-        lowest_height = self.graph.heights[cell_id]
-        target_cell = None
+        # Temporarily replace neighbor list for guided selection
+        original_neighbors = self.graph.cell_neighbors[cell_id]
+        self.graph.cell_neighbors[cell_id] = filtered
+        try:
+            return self._find_flow_target(cell_id)
+        finally:
+            self.graph.cell_neighbors[cell_id] = original_neighbors
 
-        for neighbor_id in filtered_neighbors:
-            neighbor_height = self.graph.heights[neighbor_id]
-            if neighbor_height < lowest_height:
-                lowest_height = neighbor_height
-                target_cell = neighbor_id
-
-        return target_cell
+    def _local_descent_vector(self, cell_id: int) -> tuple[float, float]:
+        """Estimate unit descent direction from neighbor heights."""
+        px, py = self.graph.points[cell_id]
+        h0 = float(self.graph.heights[cell_id])
+        gx = 0.0
+        gy = 0.0
+        for n in self._get_neighbors(cell_id):
+            qx, qy = self.graph.points[n]
+            hn = float(self.graph.heights[n])
+            dx = qx - px
+            dy = qy - py
+            dist = math.hypot(dx, dy)
+            if dist == 0:
+                continue
+            dh = hn - h0
+            ux = dx / dist
+            uy = dy / dist
+            gx += dh * ux
+            gy += dh * uy
+        # Descent is negative gradient
+        mag = math.hypot(gx, gy)
+        if mag == 0:
+            return (0.0, 0.0)
+        dx = -gx / mag
+        dy = -gy / mag
+        return (dx, dy)
 
     def _create_or_extend_river(self, from_cell: int, to_cell: int) -> None:
         """Create new river or extend existing one."""
@@ -731,17 +764,8 @@ class Hydrology:
 
     def _flow_down(self, to_cell: int, from_flux: float, river_id: int) -> None:
         """Transfer flux downstream following FMG's flowDown algorithm exactly."""
-        # Block flow into permafrost cells to avoid rivers in glaciers
-        try:
-            if hasattr(self.climate, 'temperatures') and self.climate.temperatures is not None:
-                gid = to_cell
-                if hasattr(self.graph, 'grid_indices') and self.graph.grid_indices is not None:
-                    gid = self.graph.grid_indices[to_cell]
-                if gid < len(self.climate.temperatures):
-                    if float(self.climate.temperatures[gid]) < getattr(self.climate.options, 'permafrost_threshold', -5.0):
-                        return
-        except Exception:
-            pass
+        # Allow rivers to traverse permafrost so mouths can reach the sea.
+        # We still refrain from spawning new rivers inside permafrost (handled upstream).
         # Get current flux and river for target cell
         to_flux = self.flux[to_cell] - self.confluences[to_cell].astype(float).sum() if hasattr(self.confluences[to_cell], 'sum') else (self.flux[to_cell] - (1.0 if self.confluences[to_cell] else 0.0))
         to_river_id = self.river_ids[to_cell]
@@ -826,40 +850,108 @@ class Hydrology:
             # Calculate distance from source for the mouth
             if river.cells:
                 river.source_distance = self._calculate_source_distance(river.cells)
+
+            # Build meandered centerline and variable-width polygon path
+            try:
+                pts, ws = self._build_meandered_path(river)
+                river.path_points = pts
+                river.path_widths = ws
+                ring = self._build_polygon_from_centerline(pts, ws)
+                if ring and len(ring) >= 4:
+                    # Ensure closed ring
+                    if ring[0] != ring[-1]:
+                        ring.append(ring[0])
+                    river.polygon = ring
+            except Exception as e:
+                logger.warning("Failed to build meandered path/polygon", river_id=river_id, error=str(e))
         
         # Snap river mouths near coast to the sea with a short BFS if requested
-        if self.options.snap_to_coast_steps and self.options.snap_to_coast_steps > 0:
+        # Optionally extend mouths toward the nearest ocean
+        if self.options.snap_to_coast_steps is not None:
             for river_id, river in list(self.rivers.items()):
                 if not river.cells:
                     continue
                 mouth = river.cells[-1]
                 if self.graph.heights[mouth] < self.options.sea_level:
                     continue  # already at water
-                path = self._bfs_to_coast(mouth, self.options.snap_to_coast_steps)
+                path = self._least_cost_path_to_ocean(mouth, self.options.snap_to_coast_steps, current_river_id=river_id)
                 if path:
                     for c in path:
                         if c not in river.cells:
                             river.cells.append(c)
                             self.river_ids[c] = river_id
 
-    def _bfs_to_coast(self, start: int, max_steps: int) -> List[int] | None:
-        """Short BFS to the nearest ocean cell, returning path of cells (excluding start)."""
-        from collections import deque
-        q = deque()
-        q.append((start, []))
-        seen = set([start])
+    def _least_cost_path_to_ocean(self, start: int, max_steps: int | None, current_river_id: Optional[int] = None) -> List[int] | None:
+        """Find a near-downhill path from start cell to the ocean using a cost function.
+
+        Strongly penalizes uphill movement and avoids lakes; prefers shorter, downhill paths.
+        Returns the path excluding the start cell, or None if not found within limits.
+        """
+        import heapq
+
+        def is_ocean_cell(cid: int) -> bool:
+            try:
+                if hasattr(self.features, 'feature_ids') and hasattr(self.graph, 'features') \
+                   and self.features.feature_ids is not None and self.graph.features is not None:
+                    fid = int(self.features.feature_ids[cid]) if cid < len(self.features.feature_ids) else 0
+                    if 0 < fid < len(self.graph.features):
+                        f = self.graph.features[fid]
+                        if f is not None and getattr(f, 'type', None) == 'ocean':
+                            return True
+            except Exception:
+                pass
+            return False
+
+        def is_lake_cell(cid: int) -> bool:
+            try:
+                if hasattr(self.features, 'feature_ids') and self.features.feature_ids is not None:
+                    fid = int(self.features.feature_ids[cid]) if cid < len(self.features.feature_ids) else 0
+                    if 0 < fid < len(self.graph.features):
+                        f = self.graph.features[fid]
+                        return f is not None and getattr(f, 'type', None) == 'lake'
+            except Exception:
+                pass
+            return False
+
+        unlimited = (max_steps is None) or (max_steps <= 0)
+        start_h = float(self.graph.heights[start])
+        pq = []  # (cost, cell)
+        heapq.heappush(pq, (0.0, start))
+        dist = {start: 0.0}
+        prev: dict[int, int] = {}
         steps = 0
-        while q and steps <= max_steps:
-            for _ in range(len(q)):
-                cell, path = q.popleft()
-                for n in self._get_neighbors(cell):
-                    if n in seen:
-                        continue
-                    seen.add(n)
-                    npath = path + [n]
-                    if self.graph.heights[n] < self.options.sea_level:
-                        return npath
-                    q.append((n, npath))
+        visited_layers = {start: 0}
+
+        while pq and (unlimited or steps <= max_steps):
+            cost, u = heapq.heappop(pq)
+            # If reached ocean
+            if is_ocean_cell(u):
+                # reconstruct path excluding start
+                path = []
+                cur = u
+                while cur != start:
+                    path.append(cur)
+                    cur = prev[cur]
+                path.reverse()
+                return path
+
+            # Expand
+            for v in self._get_neighbors(u):
+                if is_lake_cell(v):
+                    continue  # do not route through lakes for mouth snapping
+                du = float(self.graph.heights[u])
+                dv = float(self.graph.heights[v])
+                rise = max(0.0, dv - du)
+                step_cost = 1.0 + self.options.uphill_penalty * rise
+                ncost = cost + step_cost
+                if v not in dist or ncost < dist[v]:
+                    dist[v] = ncost
+                    prev[v] = u
+                    heapq.heappush(pq, (ncost, v))
+                    visited_layers[v] = visited_layers[u] + 1
+                # Previously we stopped when encountering another river cell to "join" networks.
+                # That produced inland termini if the encountered river was not yet extended.
+                # We now always continue searching to the ocean.
             steps += 1
         return None
 
@@ -881,6 +973,23 @@ class Hydrology:
         """
         if discharge <= 0:
             return 0.0
+
+        # Parity mode: approximate FMG's visual width scaling using discrete bins
+        if getattr(self.options, "parity_width", False):
+            # FMG scales stroke width roughly by log/thresholded flux classes.
+            # Use simple bins; tune as needed during parity snapshots.
+            q = float(discharge)
+            if q < 10:
+                return 1.0
+            if q < 30:
+                return 2.0
+            if q < 80:
+                return 3.0
+            if q < 200:
+                return 4.0
+            if q < 500:
+                return 5.0
+            return 6.0
 
         # Calculate average slope if river cells are provided
         slope = self.options.min_slope  # Default minimum slope
@@ -978,3 +1087,133 @@ class Hydrology:
         mouth = self.graph.points[cells[-1]]
 
         return math.sqrt((mouth[0] - source[0])**2 + (mouth[1] - source[1])**2)
+
+    # --- Meandering and polygonal path helpers ---
+    def _shared_edge_midpoint(self, a: int, b: int) -> List[float]:
+        """Midpoint of the shared Voronoi edge between cells a and b.
+
+        Falls back to midpoint of centroids if ridge vertices cannot be found.
+        """
+        try:
+            ca = set(self.graph.cell_vertices[a])
+            cb = set(self.graph.cell_vertices[b])
+            shared = list(ca.intersection(cb))
+            if len(shared) >= 2:
+                v1, v2 = shared[0], shared[1]
+                p1 = self.graph.vertex_coordinates[v1]
+                p2 = self.graph.vertex_coordinates[v2]
+                return [float((p1[0] + p2[0]) / 2.0), float((p1[1] + p2[1]) / 2.0)]
+        except Exception:
+            pass
+        # Fallback: midpoint of cell centers
+        p0 = self.graph.points[a]
+        p1 = self.graph.points[b]
+        return [float((p0[0] + p1[0]) / 2.0), float((p0[1] + p1[1]) / 2.0)]
+
+    def _catmull_rom_spline(self, points: List[List[float]], alpha: float = 0.5, segments: int = 8) -> List[List[float]]:
+        """Interpolate a Catmull-Rom spline through points with centripetal parameterization."""
+        if len(points) < 2:
+            return points
+        pts = [[float(x), float(y)] for x, y in points]
+        # Duplicate endpoints for handling boundaries
+        p = [pts[0]] + pts + [pts[-1]]
+        out: List[List[float]] = []
+        for i in range(1, len(p) - 2):
+            p0, p1, p2, p3 = p[i - 1], p[i], p[i + 1], p[i + 2]
+            # Compute parameterization
+            def tj(ti: float, pa: List[float], pb: List[float]) -> float:
+                dx = pb[0] - pa[0]
+                dy = pb[1] - pa[1]
+                return (dx * dx + dy * dy) ** (alpha * 0.5) + ti
+            t0 = 0.0
+            t1 = tj(t0, p0, p1)
+            t2 = tj(t1, p1, p2)
+            t3 = tj(t2, p2, p3)
+            for t in np.linspace(t1, t2, max(2, segments), endpoint=True):
+                # Interpolate points
+                def lerp(pa, pb, ta, tb, t):
+                    if tb - ta == 0:
+                        return pa
+                    w = (t - ta) / (tb - ta)
+                    return [pa[0] + (pb[0] - pa[0]) * w, pa[1] + (pb[1] - pa[1]) * w]
+                a1 = lerp(p0, p1, t0, t1, t)
+                a2 = lerp(p1, p2, t1, t2, t)
+                a3 = lerp(p2, p3, t2, t3, t)
+                b1 = lerp(a1, a2, t0, t2, t)
+                b2 = lerp(a2, a3, t1, t3, t)
+                c = lerp(b1, b2, t1, t2, t)
+                out.append([float(c[0]), float(c[1])])
+        return out
+
+    def _build_meandered_path(self, river: RiverData, alpha: float = 0.5, segments_per_edge: int = 8) -> Tuple[List[Tuple[float, float]], List[float]]:
+        """Build a smoothed meandered polyline and per-vertex widths for a river.
+
+        Returns:
+            (points, widths) where points is a list of (x,y) and widths is per-point width.
+        """
+        cells = river.cells
+        if not cells or len(cells) < 2:
+            return [], []
+        waypoints: List[List[float]] = []
+        # Start at source cell center
+        p0 = self.graph.points[cells[0]]
+        waypoints.append([float(p0[0]), float(p0[1])])
+        # Add shared edge midpoints along the path
+        for i in range(len(cells) - 1):
+            a, b = cells[i], cells[i + 1]
+            mid = self._shared_edge_midpoint(a, b)
+            if not waypoints or mid != waypoints[-1]:
+                waypoints.append(mid)
+        # If mouth cell is water, extend to center for clarity
+        last = cells[-1]
+        if int(self.graph.heights[last]) < self.options.sea_level:
+            pl = self.graph.points[last]
+            last_pt = [float(pl[0]), float(pl[1])]
+            if waypoints[-1] != last_pt:
+                waypoints.append(last_pt)
+
+        smooth = self._catmull_rom_spline(waypoints, alpha=alpha, segments=segments_per_edge)
+        if len(smooth) < 2:
+            smooth = waypoints
+
+        # Compute per-point widths increasing toward mouth
+        # Width at mouth is precomputed river.width; source width is smaller
+        w_mouth = max(1.0, float(river.width))
+        w_source = max(0.3 * w_mouth, 1.0)
+        n = len(smooth)
+        widths: List[float] = []
+        for i in range(n):
+            t = i / max(1, n - 1)
+            widths.append(w_source + (w_mouth - w_source) * t)
+        return [(float(x), float(y)) for x, y in smooth], widths
+
+    def _build_polygon_from_centerline(self, points: List[Tuple[float, float]], widths: List[float]) -> List[List[float]]:
+        """Construct a variable-width river polygon from centerline points and widths."""
+        if not points or len(points) < 2 or len(points) != len(widths):
+            return []
+        left: List[List[float]] = []
+        right: List[List[float]] = []
+        n = len(points)
+        for i in range(n):
+            x, y = points[i]
+            # Tangent: forward/back difference
+            if i == 0:
+                dx = points[i + 1][0] - x
+                dy = points[i + 1][1] - y
+            elif i == n - 1:
+                dx = x - points[i - 1][0]
+                dy = y - points[i - 1][1]
+            else:
+                dx = points[i + 1][0] - points[i - 1][0]
+                dy = points[i + 1][1] - points[i - 1][1]
+            mag = math.hypot(dx, dy) or 1.0
+            tx, ty = dx / mag, dy / mag
+            # Normal to the left
+            nx, ny = -ty, tx
+            hw = widths[i] / 2.0
+            left.append([float(x + nx * hw), float(y + ny * hw)])
+            right.append([float(x - nx * hw), float(y - ny * hw)])
+        ring = left + right[::-1]
+        if ring and ring[0] != ring[-1]:
+            ring.append(ring[0])
+        return ring

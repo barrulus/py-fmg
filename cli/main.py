@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from py_fmg.core.voronoi_graph import GridConfig, generate_voronoi_graph
+from py_fmg.core.cell_packing import regraph
 from py_fmg.core.heightmap_generator import HeightmapConfig, HeightmapGenerator
 from py_fmg.core.features import Features
 from py_fmg.core.hydrology import Hydrology, HydrologyOptions
@@ -23,6 +24,8 @@ from py_fmg.exporter_geojson import (
     export_biomes_geojson,
     export_rivers_geojson,
     export_rivers_smooth_geojson,
+    export_rivers_polygons_geojson,
+    export_topography_geojson,
     build_cells_fc,
     build_coastlines_fc,
     build_watermask_fc,
@@ -30,11 +33,18 @@ from py_fmg.exporter_geojson import (
     build_biomes_fc,
     build_rivers_fc,
     build_rivers_smooth_fc,
+    build_rivers_polygons_fc,
+    build_topography_fc,
 )
 from py_fmg.core.climate import Climate, ClimateOptions
 from py_fmg.core.biomes import BiomeClassifier
 from py_fmg.core.cultures import CultureGenerator
 from py_fmg.core.settlements import Settlements, SettlementOptions
+from py_fmg.core.provinces import ProvincesGenerator, ProvinceOptions
+from py_fmg.core.routes import RoutesGenerator, RouteOptions
+from py_fmg.core.markers import MarkersGenerator
+from py_fmg.core.military import MilitaryGenerator
+from py_fmg.core.religions import ReligionGenerator
 from py_fmg.core.name_generator import NameGenerator
 from py_fmg.preview.leaflet_template import write_inline_leaflet, write_inline_leaflet_multi
 from py_fmg.exporter_map import export_fmg_map
@@ -48,6 +58,8 @@ def main() -> None:
     parser.add_argument("--seed", type=str, default=None, help="Random seed")
     parser.add_argument("--out", type=str, default="out", help="Output directory root")
     parser.add_argument("--template", type=str, default="continents", help="Heightmap template name")
+    parser.add_argument("--precreated", type=str, default=None, help="Precreated heightmap id or PNG path (overrides --template)")
+    parser.add_argument("--list-precreated", action="store_true", help="List available precreated heightmap IDs and exit")
     parser.add_argument("--target-land", type=float, default=None, help="Target land fraction [0-1] (auto sea-level shift)")
     # Output toggles (single-switch enable; omit to disable)
     # --geojson [basename] : if provided, write GeoJSON; basename optional, else default naming
@@ -64,6 +76,16 @@ def main() -> None:
     parser.add_argument("--precip-mult", type=float, default=1.0, help="Multiplier for precipitation in hydrology")
     parser.add_argument("--snap-to-coast-steps", type=int, default=3, help="Steps to snap river mouths to coast")
     parser.add_argument("--resolve-steps", type=int, default=100, help="Max iterations for depression resolution")
+    parser.add_argument("--parity-mode", action="store_true", help="Disable enhanced flow and coast snapping for FMG parity")
+    # Performance/feature toggles
+    parser.add_argument("--skip-routes", action="store_true", help="Skip routes generation (land + sea)")
+    parser.add_argument("--skip-markers", action="store_true", help="Skip markers (POIs)")
+    parser.add_argument("--skip-military", action="store_true", help="Skip military (regiments)")
+    # Routes tuning
+    parser.add_argument("--routes-k", type=int, default=None, help="Land routes: k nearest neighbors (override default 5)")
+    parser.add_argument("--routes-max-k", type=int, default=None, help="Land routes: max neighbor k while connecting components (override default 12)")
+    parser.add_argument("--routes-sea-k", type=int, default=None, help="Sea routes: k nearest ports (override default 4)")
+    parser.add_argument("--routes-river-penalty", type=float, default=None, help="Penalty added when a route crosses a river (<=0 disables check)")
     # Climate tuning
     parser.add_argument("--equator-temp", type=float, default=None, help="Sea-level temperature at equator (°C)")
     parser.add_argument("--tropical-gradient", type=float, default=None, help="Temperature drop per degree latitude in tropics (°C/°)")
@@ -76,6 +98,18 @@ def main() -> None:
     parser.add_argument("--town-spacing-power", type=float, default=0.7, help="Power adjustment for town spacing")
     parser.add_argument("--urbanization-rate", type=float, default=0.1, help="Urbanization rate (0..1) used in settlement sizing")
     args = parser.parse_args()
+
+    # List precreated heightmaps and exit if requested
+    if args.list_precreated:
+        try:
+            from py_fmg.config.precreated_heightmaps import list_precreated
+            items = list_precreated()
+            print("Available precreated heightmaps:")
+            for k, v in items.items():
+                print(f"- {k}: {v.get('name', '')}")
+        except Exception as e:
+            print(f"Could not list precreated heightmaps: {e}")
+        return
 
     # Compose a default basename using template and timestamp (no spaces)
     ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -103,7 +137,10 @@ def main() -> None:
         spacing=float(graph.spacing),
     )
     hm = HeightmapGenerator(hm_cfg, graph, seed=args.seed)
-    graph.heights = hm.from_template(args.template, seed=args.seed)
+    if args.precreated:
+        graph.heights = hm.from_precreated(args.precreated)
+    else:
+        graph.heights = hm.from_template(args.template, seed=args.seed)
 
     # Optional: auto sea-level shift to hit target land fraction
     if args.target_land is not None:
@@ -125,7 +162,19 @@ def main() -> None:
         feat.open_near_sea_lakes()
     except Exception as e:
         print(f"Lake preprocessing skipped: {e}")
-    # Persist fields on graph for exporter convenience
+    # Pack the graph to exclude deep ocean and densify coasts (FMG reGraph)
+    graph = regraph(graph)
+    # Apply packed feature markup and align features on the packed graph
+    try:
+        feat.markup_pack(graph)
+        # Align feature arrays for downstream modules expecting them on `feat`
+        feat.distance_field = graph.distance_field
+        feat.feature_ids = graph.feature_ids
+        feat.features = graph.features
+    except Exception as e:
+        print(f"Packed feature markup skipped: {e}")
+
+    # Persist fields on packed graph for exporter convenience
     graph.distance_field = feat.distance_field
     graph.feature_ids = feat.feature_ids
     graph.features = feat.features
@@ -156,7 +205,7 @@ def main() -> None:
         neighbors=graph.cell_neighbors,
     )
 
-    geo_path = coast_path = watermask_path = climate_path = biomes_path = None
+    geo_path = coast_path = watermask_path = climate_path = biomes_path = topo_path = None
     if geojson_enabled:
         geo_path = export_cells_geojson(graph, out_root, geojson_basename)
         print(f"Wrote cells: {geo_path}")
@@ -168,6 +217,8 @@ def main() -> None:
         climate_path = export_climate_geojson(graph, graph.temperatures, graph.precipitation, out_root, geojson_basename)
         print(f"Wrote climate: {climate_path}")
         biomes_path = export_biomes_geojson(graph, cell_biomes, biome_classifier, out_root, geojson_basename)
+        topo_path = export_topography_geojson(graph, out_root, geojson_basename)
+        print(f"Wrote topography: {topo_path}")
     # Rivers (after climate and features)
     hyd = Hydrology(
         graph,
@@ -176,17 +227,21 @@ def main() -> None:
         options=HydrologyOptions(
             min_river_flux=args.min_river_flux,
             precip_multiplier=args.precip_mult,
-            snap_to_coast_steps=args.snap_to_coast_steps,
+            snap_to_coast_steps=(0 if args.parity_mode else args.snap_to_coast_steps),
             max_depression_iterations=args.resolve_steps,
+            topo_guided_flow=(False if args.parity_mode else True),
+            parity_width=bool(args.parity_mode),
         ),
     )
     rivers = hyd.generate_rivers()
-    rivers_path = rivers_smooth_path = None
+    rivers_path = rivers_smooth_path = rivers_poly_path = None
     if geojson_enabled:
         rivers_path = export_rivers_geojson(graph, rivers, out_root, geojson_basename)
         rivers_smooth_path = export_rivers_smooth_geojson(graph, rivers, out_root, geojson_basename)
+        rivers_poly_path = export_rivers_polygons_geojson(graph, rivers, out_root, geojson_basename)
         print(f"Wrote rivers: {rivers_path}")
         print(f"Wrote rivers (smooth): {rivers_smooth_path}")
+        print(f"Wrote rivers (polygons): {rivers_poly_path}")
     # Attach hydro arrays to graph for downstream modules
     graph.river_ids = hyd.river_ids
     graph.confluences = hyd.confluences
@@ -207,7 +262,19 @@ def main() -> None:
         cultures_points_path = export_cultures_points_geojson(graph, cultures, out_root, geojson_basename)
         print(f"Wrote cultures: {cultures_points_path}")
 
-    # Burgs (settlements) - minimal placement using settlement system
+    # Religions before settlements so temples and state theocracies can influence towns
+    from py_fmg.core.religions import ReligionGenerator
+    religion_gen = ReligionGenerator(
+        graph,
+        cultures,
+        cell_cultures,
+        {},  # settlements_dict (empty pre-settlements)
+        {},  # states_dict (empty pre-states)
+        name_generator=NameGenerator(),
+    )
+    religions, cell_religions = religion_gen.generate()
+
+    # Burgs (settlements) - placement using settlement system
     # Wrap cultures to match expected interface in Settlements
     class CulturesWrapper:
         def __init__(self, cultures_dict, cell_cults):
@@ -231,13 +298,87 @@ def main() -> None:
         biome_classifier,
         name_generator=NameGenerator(),
         options=settlement_opts,
+        cell_religions=cell_religions,
     )
     settlements, states = settlements_engine.generate()
+    # Expose state assignment to graph so downstream modules (provinces) can use it
+    try:
+        graph.cell_state = settlements_engine.cell_state
+    except Exception:
+        pass
     from py_fmg.exporter_geojson import export_burgs_points_geojson, build_burgs_points_fc
     burgs_path = None
     if geojson_enabled:
         burgs_path = export_burgs_points_geojson(settlements, out_root, geojson_basename)
         print(f"Wrote burgs: {burgs_path}")
+
+    # Provinces generation (subdivisions inside states)
+    prov_gen = ProvincesGenerator(graph, states, settlements, options=ProvinceOptions())
+    provinces, cell_provinces = prov_gen.generate()
+    from py_fmg.exporter_geojson import export_provinces_geojson, build_provinces_fc
+    provinces_path = None
+    if geojson_enabled:
+        provinces_path = export_provinces_geojson(graph, provinces, cell_provinces, out_root, geojson_basename)
+        print(f"Wrote provinces: {provinces_path}")
+
+    # Routes (land + sea)
+    land_routes = []
+    sea_routes = []
+    if not args.skip_routes:
+        from time import perf_counter
+        r_opts = RouteOptions()
+        if args.routes_k is not None:
+            r_opts.land_k_neighbors = max(1, int(args.routes_k))
+        if args.routes_max_k is not None:
+            r_opts.land_max_neighbor_k = max(r_opts.land_k_neighbors, int(args.routes_max_k))
+        if args.routes_sea_k is not None:
+            r_opts.sea_k_neighbors = max(1, int(args.routes_sea_k))
+        if args.routes_river_penalty is not None:
+            r_opts.river_cross_penalty = float(args.routes_river_penalty)
+
+        print(f"Building land routes (settlements={len(settlements)}, k={r_opts.land_k_neighbors}, max_k={r_opts.land_max_neighbor_k})…")
+        t0 = perf_counter()
+        routes_gen = RoutesGenerator(graph, settlements, biome_classifier, options=r_opts, rivers=rivers)
+        land_routes = routes_gen.build_land_routes()
+        t1 = perf_counter()
+        print(f"Built {len(land_routes)} land routes in {t1 - t0:.2f}s")
+
+        print(f"Building sea routes (ports only, k={r_opts.sea_k_neighbors})…")
+        t2 = perf_counter()
+        sea_routes = routes_gen.build_sea_routes()
+        t3 = perf_counter()
+        print(f"Built {len(sea_routes)} sea routes in {t3 - t2:.2f}s")
+    from py_fmg.exporter_geojson import export_routes_geojson, build_routes_fc
+    routes_path = sea_routes_path = None
+    if geojson_enabled:
+        routes_path = export_routes_geojson(land_routes, out_root, geojson_basename, filename="routes.geojson")
+        sea_routes_path = export_routes_geojson(sea_routes, out_dir=out_root, map_id=geojson_basename, filename="sea_routes.geojson")
+        print(f"Wrote routes: {routes_path}")
+        print(f"Wrote sea routes: {sea_routes_path}")
+
+    # Markers (POIs)
+    markers = []
+    if not args.skip_markers:
+        print("Placing markers (POIs)…")
+        markers_gen = MarkersGenerator(graph, settlements, rivers, routes=land_routes, seed=args.seed)
+        markers = markers_gen.generate()
+    from py_fmg.exporter_geojson import export_markers_geojson, build_markers_fc
+    markers_path = None
+    if geojson_enabled:
+        markers_path = export_markers_geojson(markers, out_root, geojson_basename)
+        print(f"Wrote markers: {markers_path}")
+
+    # Military (regiments)
+    regiments_by_state = {}
+    if not args.skip_military:
+        print("Generating regiments…")
+        mil_gen = MilitaryGenerator(graph, settlements, states)
+        regiments_by_state = mil_gen.generate()
+    from py_fmg.exporter_geojson import export_regiments_geojson, build_regiments_fc
+    regiments_path = None
+    if geojson_enabled:
+        regiments_path = export_regiments_geojson(regiments_by_state, out_root, geojson_basename)
+        print(f"Wrote regiments: {regiments_path}")
 
     # Also write a small manifest with basic metadata
     if geojson_enabled:
@@ -267,6 +408,7 @@ def main() -> None:
         manifest["artifacts"]["cultures_cells"] = str(cell_cultures_path)
         manifest["artifacts"]["cultures_points"] = str(cultures_points_path)
         manifest["artifacts"]["burgs"] = str(burgs_path)
+        manifest["artifacts"]["provinces"] = str(provinces_path)
         (manifest_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"Wrote manifest: {manifest_dir / 'manifest.json'}")
 
@@ -283,17 +425,31 @@ def main() -> None:
                 coast_fc = build_coastlines_fc(graph, preview_name)
                 climate_fc = build_climate_fc(graph, graph.temperatures, graph.precipitation, preview_name)
                 biomes_fc = build_biomes_fc(graph, cell_biomes, biome_classifier, preview_name)
+                topo_fc = build_topography_fc(graph, preview_name)
+                provinces_fc = build_provinces_fc(graph, provinces, cell_provinces, preview_name)
                 watermask_fc = build_watermask_fc(graph, preview_name)
                 rivers_fc = build_rivers_fc(graph, rivers, preview_name)
                 rivers_smooth_fc = build_rivers_smooth_fc(graph, rivers, preview_name)
+                rivers_polygons_fc = build_rivers_polygons_fc(graph, rivers, preview_name)
+                routes_fc = build_routes_fc(land_routes, preview_name)
+                sea_routes_fc = build_routes_fc(sea_routes, preview_name)
+                markers_fc = build_markers_fc(markers, preview_name)
+                regiments_fc = build_regiments_fc(regiments_by_state, preview_name)
             else:
                 fc = json.loads(Path(geo_path).read_text(encoding='utf-8')) if geo_path else {"type":"FeatureCollection","features":[]}
                 coast_fc = json.loads(Path(coast_path).read_text(encoding='utf-8')) if coast_path else {"type":"FeatureCollection","features":[]}
                 climate_fc = json.loads(Path(climate_path).read_text(encoding='utf-8')) if climate_path else {"type":"FeatureCollection","features":[]}
                 biomes_fc = json.loads(Path(biomes_path).read_text(encoding='utf-8')) if biomes_path else {"type":"FeatureCollection","features":[]}
+                topo_fc = json.loads(Path(topo_path).read_text(encoding='utf-8')) if topo_path else {"type":"FeatureCollection","features":[]}
+                provinces_fc = json.loads(Path(provinces_path).read_text(encoding='utf-8')) if provinces_path else {"type":"FeatureCollection","features":[]}
                 watermask_fc = json.loads(Path(watermask_path).read_text(encoding='utf-8')) if watermask_path else {"type":"FeatureCollection","features":[]}
                 rivers_fc = json.loads(Path(rivers_path).read_text(encoding='utf-8')) if rivers_path else {"type":"FeatureCollection","features":[]}
                 rivers_smooth_fc = json.loads(Path(rivers_smooth_path).read_text(encoding='utf-8')) if rivers_smooth_path else {"type":"FeatureCollection","features":[]}
+                rivers_polygons_fc = json.loads(Path(rivers_poly_path).read_text(encoding='utf-8')) if rivers_poly_path else {"type":"FeatureCollection","features":[]}
+                routes_fc = json.loads(Path(routes_path).read_text(encoding='utf-8')) if routes_path else {"type":"FeatureCollection","features":[]}
+                sea_routes_fc = json.loads(Path(sea_routes_path).read_text(encoding='utf-8')) if sea_routes_path else {"type":"FeatureCollection","features":[]}
+                markers_fc = json.loads(Path(markers_path).read_text(encoding='utf-8')) if markers_path else {"type":"FeatureCollection","features":[]}
+                regiments_fc = json.loads(Path(regiments_path).read_text(encoding='utf-8')) if regiments_path else {"type":"FeatureCollection","features":[]}
             # Cultures and burgs (optional)
             if not geojson_enabled:
                 cultures_cells_fc = build_cell_cultures_fc(graph, cell_cultures, cultures, preview_name)
@@ -308,13 +464,19 @@ def main() -> None:
             write_inline_leaflet_multi(
                 {
                     "cells": fc,
+                    "topography": topo_fc,
+                    "provinces": provinces_fc,
                     "climate": climate_fc,
                     "biomes": biomes_fc,
                     "cultures_cells": cultures_cells_fc,
                     "watermask": watermask_fc,
-                    "rivers": rivers_fc,
                     "burgs": burgs_fc,
                     "rivers_smooth": rivers_smooth_fc,
+                    "rivers_polygons": rivers_polygons_fc,
+                    "routes": routes_fc,
+                    "sea_routes": sea_routes_fc,
+                    "markers": markers_fc,
+                    "regiments": regiments_fc,
                     "coastlines": coast_fc
                 },
                 html2,
@@ -365,6 +527,18 @@ def main() -> None:
                 rivers_json=rivers_json,
                 features_list=feat.features,
                 minimal=args.export_map_minimal,
+                settlements=settlements,
+                states=states,
+                provinces=provinces,
+                cell_provinces=cell_provinces,
+                cultures=cultures,
+                cell_cultures=cell_cultures,
+                religions=religions,
+                cell_religions=cell_religions,
+                land_routes=land_routes,
+                sea_routes=sea_routes,
+                markers=markers,
+                regiments_by_state=regiments_by_state,
             )
             print(f"Wrote FMG map: {export_path}")
         except Exception as e:

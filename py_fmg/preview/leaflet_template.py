@@ -122,6 +122,19 @@ def write_inline_leaflet_multi(
           return {{ color: '#333', weight: 0.2, fillColor: c, fillOpacity: 0.75 }};
         }}
       }}
+      if (name === 'provinces') {{
+        return function(f) {{
+          const c = (f.properties && f.properties.color) || '#a8c0ff';
+          return {{ color: '#444', weight: 0.6, fillColor: c, fillOpacity: 0.35 }};
+        }}
+      }}
+      if (name === 'topography') {{
+        return function(f) {{
+          const p = f.properties || {{}};
+          const c = p.color || '#cccccc';
+          return {{ color: '#333', weight: 0.1, fillColor: c, fillOpacity: 0.85 }};
+        }}
+      }}
       if (name === 'cultures_cells') {{
         return function(f) {{
           const c = (f.properties && f.properties.color) || '#cccccc';
@@ -140,8 +153,29 @@ def write_inline_leaflet_multi(
       if (name === 'rivers' || name === 'rivers_smooth') {{
         return function(f) {{
           const w = (f.properties && f.properties.width) || 1.0;
-          const lw = Math.max(1, Math.min(4, w / 2));
-          return {{ color: '#1e90ff', weight: lw, opacity: 0.9 }};
+          const lw = Math.max(1, Math.min(6, 1 + Math.log2(1 + w)));
+          return {{ color: '#1e90ff', weight: lw, opacity: 0.9, lineCap: 'round', lineJoin: 'round' }};
+        }}
+      }}
+      if (name === 'routes') {{
+        return function(f) {{
+          const cls = (f.properties && f.properties.class) || 'road';
+          let color = '#8b4513';
+          let dashArray = null;
+          let weight = 2.0;
+          if (cls === 'highway') {{ weight = 3.5; dashArray = null; }}
+          else if (cls === 'road') {{ weight = 2.5; dashArray = '6 6'; }}
+          else {{ weight = 2.0; dashArray = '2 6'; }}
+          return {{ color, weight, dashArray, opacity: 0.9, lineCap: 'round', lineJoin: 'round' }};
+        }}
+      }}
+      if (name === 'sea_routes') {{
+        return function(f) {{
+          const cls = (f.properties && f.properties.class) || 'coastal';
+          let color = '#0055aa';
+          let dashArray = cls === 'sea-lane' ? '10 6' : '4 8';
+          let weight = cls === 'sea-lane' ? 3.0 : 2.0;
+          return {{ color, weight, dashArray, opacity: 0.85, lineCap: 'round', lineJoin: 'round' }};
         }}
       }}
       if (name === 'burgs') {{
@@ -166,9 +200,48 @@ def write_inline_leaflet_multi(
       }}
     }}
 
+    function pointToLayerFor(name) {{
+      if (name === 'markers') {{
+        return function(feature, latlng) {{
+          const p = feature.properties || {{}};
+          const iconHtml = `<div style=\"font-size:${{(p.px || 16)}}px; line-height:1; transform: translate(${{p.dx||0}}px, ${{p.dy||0}}px);\">${{p.icon || '•'}}</div>`;
+          const icon = L.divIcon({{ html: iconHtml, className: 'marker-emoji', iconSize: [p.px||16, p.px||16]}});
+          return L.marker(latlng, {{ icon }});
+        }}
+      }}
+      if (name === 'regiments') {{
+        return function(feature, latlng) {{
+          const p = feature.properties || {{}};
+          const iconHtml = `<div style=\"font-size:16px; line-height:1;\">${{p.icon || '⚔️'}}</div>`;
+          const icon = L.divIcon({{ html: iconHtml, className: 'regiment-emoji', iconSize: [16,16]}});
+          return L.marker(latlng, {{ icon }});
+        }}
+      }}
+      return null;
+    }}
+
+    function onEachFeatureFor(name) {{
+      return function(feature, layer) {{
+        const p = feature.properties || {{}};
+        if (name === 'markers') {{
+          const title = p.name || p.type || 'Marker';
+          const legend = p.legend || '';
+          layer.bindPopup(`<b>${{title}}</b><br/>${{legend}}`);
+        }} else if (name === 'regiments') {{
+          const title = p.name || 'Regiment';
+          const total = p.total != null ? ` — ${{p.total}}` : '';
+          layer.bindPopup(`<b>${{title}}${{total}}</b>`);
+        }} else if (name === 'routes' || name === 'sea_routes') {{
+          const cls = p.class || '';
+          const dist = p.distance != null ? ` (${{(p.distance.toFixed ? p.distance.toFixed(1) : p.distance)}})` : '';
+          layer.bindPopup(`<b>${{name}}</b> — ${{cls}}${{dist}}`);
+        }}
+      }}
+    }}
+
     const layerObjs = {{}};
     let anyLayer = null;
-    {''.join([f"layerObjs['{name}'] = L.geoJSON({var}, {{style: styleFor('{name}')}}).addTo(map);\n" for name,var in var_names])}
+    {''.join([f"layerObjs['{name}'] = L.geoJSON({var}, {{style: styleFor('{name}'), pointToLayer: pointToLayerFor('{name}'), onEachFeature: onEachFeatureFor('{name}')}}).addTo(map);\n" for name,var in var_names])}
     {''.join([f"if (!anyLayer && layerObjs['{name}'].getLayers().length) anyLayer = layerObjs['{name}'];\n" for name,_ in var_names])}
     if (anyLayer) {{ map.fitBounds(anyLayer.getBounds().pad(0.05)); }} else {{ map.setView([0,0],1); }}
     L.control.layers({{}}, layerObjs, {{ collapsed: false }}).addTo(map);

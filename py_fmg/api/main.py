@@ -17,10 +17,11 @@ from ..core.climate import Climate
 from ..core.cultures import CultureGenerator
 from ..core.features import Features
 from ..core.heightmap_generator import HeightmapConfig, HeightmapGenerator
-from ..core.hydrology import Hydrology
+from ..core.hydrology import Hydrology, HydrologyOptions
 from ..core.name_generator import NameGenerator
 from ..core.settlements import Settlements
 from ..core.voronoi_graph import GridConfig, generate_voronoi_graph
+from ..exporter_geojson import _cell_polygon
 from ..db.connection import db
 from ..db.models import (
     GenerationJob,
@@ -28,6 +29,9 @@ from ..db.models import (
     VoronoiCell,
     ClimateData,
     River,
+    RoutePath,
+    Marker as MarkerDB,
+    Regiment as RegimentDB,
     Culture,
     CellCulture,
     BiomeRegion,
@@ -87,6 +91,7 @@ class MapGenerationRequest(BaseModel):
         validation_alias=AliasChoices("template_name", "template"),
         description="Heightmap template name",
     )
+    precreated_name: Optional[str] = Field(None, description="Precreated heightmap id or PNG path (overrides template)")
     map_name: Optional[str] = Field(None, description="Custom map name")
 
 
@@ -154,6 +159,17 @@ async def health_check() -> Dict[str, str]:
     except Exception as e:
         logger.error("Health check failed", error=str(e))
         raise HTTPException(status_code=503, detail="Service unhealthy")
+
+
+@app.get("/heightmaps/precreated")
+async def list_precreated_heightmaps() -> Dict[str, Dict[str, str]]:
+    """List available precreated heightmaps (id -> {id,name})."""
+    try:
+        from ..config.precreated_heightmaps import list_precreated
+        return list_precreated()
+    except Exception as e:
+        logger.error("Failed to list precreated heightmaps", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to list precreated heightmaps")
 
 
 @app.post("/maps/generate", response_model=JobResponse)
@@ -336,7 +352,10 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
         )
 
         heightmap_gen = HeightmapGenerator(heightmap_config, voronoi_graph)
-        heights = heightmap_gen.from_template(request.template_name, seed)
+        if request.precreated_name:
+            heights = heightmap_gen.from_precreated(request.precreated_name)
+        else:
+            heights = heightmap_gen.from_template(request.template_name, seed)
 
         # Assign heights to the graph
         voronoi_graph.heights = heights
@@ -379,6 +398,20 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
         # The packed_graph already contains the new Voronoi graph and heights
         packed_heights = packed_graph.heights
 
+        # Mark up packed graph features (coastlines, lakes, etc.)
+        # Needed for coastal flags and downstream parity
+        try:
+            features.markup_pack(packed_graph)
+            # Mirror packed feature arrays onto Features instance for downstream modules
+            try:
+                features.distance_field = packed_graph.distance_field
+                features.feature_ids = packed_graph.feature_ids
+                features.features = packed_graph.features
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning("markup_pack failed; continuing without packed feature flags", error=str(e))
+
         # Update progress
         with db.get_session() as session:
             job = (
@@ -417,42 +450,69 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
         # Export Voronoi cells to database (right after Stage 5)
         logger.info("Exporting Voronoi cells to database", job_id=job_id)
 
-        # We need to create polygon geometries from the Voronoi cells
-        # For now, let's create simple point-based cells and improve later
-        from shapely.geometry import Point
+        # Create true Voronoi polygons from packed graph topology
+        from shapely.geometry import Polygon
+        from shapely.validation import make_valid
         from geoalchemy2.shape import from_shape
 
+        local_srid = settings.local_srid
+
         with db.get_session() as session:
+            exported = 0
             for i, (point, height) in enumerate(
                 zip(packed_graph.points, packed_graph.heights)
             ):
-                # Create a simple circular polygon around each point (temporary solution)
-                # In a full implementation, we'd use the actual Voronoi cell boundaries
-                x, y = point[0], point[1]
+                ring = _cell_polygon(packed_graph, i)
+                if not ring or len(ring) < 4:  # need at least 3 unique points + closure
+                    continue
 
-                # Create a small polygon around the point (radius based on map size)
-                radius = (
-                    min(request.width, request.height) / len(packed_graph.points) * 2
-                )
-                circle = Point(x, y).buffer(radius)
+                poly = Polygon(ring)
+                if not poly.is_valid:
+                    try:
+                        fixed = make_valid(poly)
+                        # If MultiPolygon, select the largest part to fit POLYGON column
+                        if fixed.geom_type == "MultiPolygon":
+                            parts = list(fixed.geoms)
+                            if not parts:
+                                continue
+                            poly = max(parts, key=lambda g: g.area)
+                        elif fixed.geom_type == "Polygon":
+                            poly = fixed
+                        else:
+                            # Fallback: skip non-polygon results
+                            continue
+                    except Exception:
+                        # Fallback: simple zero-width buffer fix
+                        try:
+                            poly = poly.buffer(0)
+                        except Exception:
+                            continue
+
+                x, y = float(point[0]), float(point[1])
+                is_land = bool(int(height) >= 20)
+                is_coastal = False
+                try:
+                    df = int(packed_graph.distance_field[i]) if getattr(packed_graph, "distance_field", None) is not None else 0
+                    is_coastal = df in (1, -1)
+                except Exception:
+                    is_coastal = False
 
                 voronoi_cell = VoronoiCell(
                     map_id=map_id,
-                    cell_index=i,
-                    geometry=from_shape(circle, srid=4326),
+                    cell_index=int(i),
+                    geometry=from_shape(poly, srid=local_srid),
                     height=int(height),
-                    is_land=height >= 20,
-                    is_coastal=False,  # Will be determined later
-                    center_x=float(x),
-                    center_y=float(y),
-                    area=float(circle.area),
+                    is_land=is_land,
+                    is_coastal=is_coastal,
+                    center_x=x,
+                    center_y=y,
+                    area=float(poly.area),
                 )
                 session.add(voronoi_cell)
+                exported += 1
 
             session.commit()
-            logger.info(
-                f"Exported {len(packed_graph.points)} Voronoi cells to database"
-            )
+            logger.info(f"Exported {exported} Voronoi cell polygons to database")
 
         # Stage 6: Generate climate (60% progress)
         logger.info("Generating climate", job_id=job_id)
@@ -461,6 +521,18 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
         climate = Climate(packed_graph)
         climate.calculate_temperatures()
         climate.generate_precipitation()
+
+        # Between climate and hydrology: compute lake climate/outlets on packed graph
+        try:
+            from ..core.lakes import define_climate_data as _define_lake_climate_data
+            lake_out_map = _define_lake_climate_data(packed_graph, climate)
+            # Persist for debugging/preview if needed
+            try:
+                packed_graph.lake_out_cells = lake_out_map  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning("Lake climate helper failed; hydrology will attempt its own", error=str(e))
 
         # Update progress
         with db.get_session() as session:
@@ -504,7 +576,15 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
 
         # Stage 7: Generate rivers (70% progress)
         logger.info("Generating rivers", job_id=job_id)
-        hydrology = Hydrology(packed_graph, features, climate)
+        hydrology = Hydrology(
+            packed_graph,
+            features,
+            climate,
+            options=HydrologyOptions(
+                topo_guided_flow=False,
+                snap_to_coast_steps=0,
+            ),
+        )
         rivers = hydrology.generate_rivers()
 
         # Update progress
@@ -518,7 +598,7 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
         # Export rivers to database (right after Stage 7)
         logger.info("Exporting rivers to database", job_id=job_id)
 
-        from shapely.geometry import LineString
+        from shapely.geometry import LineString, Polygon
         from geoalchemy2.shape import from_shape
 
         with db.get_session() as session:
@@ -539,11 +619,22 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
                         # Generate a simple river name
                         river_name = f"River {river_id}"
 
+                        # Optional polygonal river geometry from hydrology
+                        poly_geom = None
+                        try:
+                            ring = getattr(river_data, "polygon", None)
+                            if ring and len(ring) >= 4:
+                                poly = Polygon(ring)
+                                poly_geom = from_shape(poly, srid=settings.local_srid)
+                        except Exception:
+                            poly_geom = None
+
                         river_record = River(
                             map_id=map_id,
                             river_index=river_id,
                             name=river_name,
-                            geometry=from_shape(linestring, srid=4326),
+                            geometry=from_shape(linestring, srid=settings.local_srid),
+                            polygon_geometry=poly_geom,
                             length_km=float(linestring.length),  # Approximate length
                             discharge_m3s=float(river_data.discharge),
                             average_width_m=5.0,  # Default width
@@ -556,10 +647,29 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
             session.commit()
             logger.info(f"Exported {len(rivers)} rivers to database")
 
-        # Stage 8: Generate cultures (75% progress)
-        logger.info("Generating cultures", job_id=job_id)
-        # Create BiomeClassifier for culture generation
+        # Stage 8: Biomes before cultures (72% progress)
+        logger.info("Classifying biomes", job_id=job_id)
         biome_classifier = BiomeClassifier()
+        try:
+            # has_river boolean per cell if river id present
+            import numpy as _np
+            has_river = (hydrology.river_ids > 0) if hasattr(hydrology, 'river_ids') else _np.zeros(len(packed_graph.points), dtype=bool)
+            biome_ids = biome_classifier.classify_biomes(
+                temperatures=climate.temperatures,
+                precipitation=climate.precipitation,
+                heights=packed_graph.heights,
+                river_flux=getattr(hydrology, 'flux', None),
+                has_river=has_river,
+                neighbors=packed_graph.cell_neighbors,
+            )
+            # Attach to graph in a lightweight container for CultureGenerator
+            from types import SimpleNamespace as _SNS
+            packed_graph.biomes = _SNS(cell_biomes=biome_ids)
+        except Exception as e:
+            logger.warning("Biome classification failed; proceeding without explicit biomes", error=str(e))
+
+        # Stage 9: Generate cultures (75% progress)
+        logger.info("Generating cultures", job_id=job_id)
         culture_generator = CultureGenerator(packed_graph, features, biome_classifier)
         (
             cultures_dict,
@@ -1055,7 +1165,89 @@ async def run_map_generation(job_id: str, request: MapGenerationRequest) -> None
                 f"Exported {len(settlements.settlements)} settlements to database"
             )
 
-        # Stage 12: Finalize map generation (100% progress)
+        # Stage 11: Routes (land + sea)
+        logger.info("Generating routes", job_id=job_id)
+        from ..core.routes import RoutesGenerator
+        routes_gen = RoutesGenerator(packed_graph, settlements.settlements, biome_classifier, rivers=rivers)
+        land_routes = routes_gen.build_land_routes()
+        sea_routes = routes_gen.build_sea_routes()
+
+        # Export routes to database
+        from shapely.geometry import LineString
+        from geoalchemy2.shape import from_shape
+        with db.get_session() as session:
+            for r in land_routes + sea_routes:
+                ls = LineString(r.coords) if len(r.coords) >= 2 else None
+                if ls is None:
+                    continue
+                route_rec = RoutePath(
+                    map_id=map_id,
+                    route_index=int(r.id),
+                    kind=r.kind,
+                    cls=r.cls,
+                    start_settlement_index=int(r.start_settlement),
+                    end_settlement_index=int(r.end_settlement),
+                    geometry=from_shape(ls, srid=settings.local_srid),
+                    distance_units=float(ls.length),
+                )
+                session.add(route_rec)
+            session.commit()
+        logger.info("Routes exported to database", land=len(land_routes), sea=len(sea_routes))
+
+        # Stage 12: Markers & Military
+        logger.info("Generating markers", job_id=job_id)
+        from ..core.markers import MarkersGenerator
+        markers_gen = MarkersGenerator(packed_graph, settlements.settlements, rivers, routes=[], seed=seed)
+        markers = markers_gen.generate()
+
+        # Persist markers
+        from shapely.geometry import Point
+        from geoalchemy2.shape import from_shape
+        with db.get_session() as session:
+            for m in markers:
+                pt = Point(float(m.x), float(m.y))
+                rec = MarkerDB(
+                    map_id=map_id,
+                    marker_index=int(m.i),
+                    type=m.type,
+                    icon=m.icon,
+                    name=m.name,
+                    legend=m.legend,
+                    cell_index=int(m.cell),
+                    dx=m.dx,
+                    dy=m.dy,
+                    px=m.px,
+                    geometry=from_shape(pt, srid=settings.local_srid),
+                )
+                session.add(rec)
+            session.commit()
+        logger.info("Markers exported to database", count=len(markers))
+
+        logger.info("Generating military regiments", job_id=job_id)
+        from ..core.military import MilitaryGenerator
+        mil_gen = MilitaryGenerator(packed_graph, settlements.settlements, states)
+        regiments_by_state = mil_gen.generate()
+        with db.get_session() as session:
+            for sid, regs in regiments_by_state.items():
+                for r in regs:
+                    pt = Point(float(r.x), float(r.y))
+                    rec = RegimentDB(
+                        map_id=map_id,
+                        regiment_index=int(r.i),
+                        state_index=int(sid),
+                        name=r.name,
+                        icon=r.icon,
+                        naval=bool(r.n),
+                        total=int(r.a),
+                        cell_index=int(r.cell),
+                        units=r.u,
+                        geometry=from_shape(pt, srid=settings.local_srid),
+                    )
+                    session.add(rec)
+            session.commit()
+        logger.info("Regiments exported to database")
+
+        # Stage 13: Finalize map generation (100% progress)
 
         # Update generation time and complete the job
         with db.get_session() as session:

@@ -31,6 +31,7 @@ geopandas = "^1.1.1"
 geoalchemy2 = "^0.18.0"
 rasterio = "^1.4.3"
 scikit-learn = "^1.7.1"
+Pillow = "^10.4.0"
 
 [tool.poetry.group.dev.dependencies]
 httpx = "0.28.1"

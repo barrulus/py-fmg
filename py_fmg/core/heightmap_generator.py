@@ -9,6 +9,7 @@ import numpy as np
 from typing import Optional, Tuple, Union, List
 from dataclasses import dataclass
 from ..utils.random import set_random_seed, get_prng
+from pathlib import Path
 
 
 @dataclass
@@ -933,3 +934,73 @@ class HeightmapGenerator:
         # Simulate JavaScript's Uint8Array truncation behavior
         # When JS assigns float array to Uint8Array, it truncates (floors) values
         return np.floor(self.heights).astype(np.uint8)
+
+    def from_precreated(self, id_or_path: str) -> np.ndarray:
+        """
+        Generate heightmap from a precreated PNG, matching FMG's mapping:
+        - Resize/fit the image to (cells_x, cells_y)
+        - Read lightness from the red channel (grayscale OK)
+        - Apply power curve: if l < 0.2 => l; else => 0.2 + (l - 0.2) ** 0.8
+        - Truncate and clamp to 0..100
+
+        Args:
+            id_or_path: Either a known FMG id (e.g., 'europe') or a PNG file path
+
+        Returns:
+            heights as uint8 array length n_cells
+        """
+        # Resolve path: allow absolute/relative path, or FMG heightmaps directory by id
+        candidate_paths: List[Path] = []
+        p = Path(id_or_path)
+        if p.suffix.lower() == ".png" and p.exists():
+            candidate_paths.append(p)
+        else:
+            # Try FMG heightmaps bundle
+            candidate_paths.append(Path("Fantasy-Map-Generator/heightmaps") / f"{id_or_path}.png")
+            # Also try local assets folder if present
+            candidate_paths.append(Path("heightmaps") / f"{id_or_path}.png")
+
+        image_path: Optional[Path] = None
+        for cp in candidate_paths:
+            if cp.exists():
+                image_path = cp
+                break
+        if image_path is None:
+            # If a plain id was provided, include the registry hint
+            try:
+                from ..config.precreated_heightmaps import list_precreated
+                known = list(list_precreated().keys())
+                raise FileNotFoundError(
+                    f"Precreated heightmap not found for '{id_or_path}'.\n"
+                    f"Tried: {candidate_paths}.\nKnown ids: {known}"
+                )
+            except Exception:
+                raise FileNotFoundError(f"Precreated heightmap not found for '{id_or_path}'. Tried: {candidate_paths}")
+
+        # Open and resize to (cells_x, cells_y)
+        try:
+            from PIL import Image  # Lazy import to avoid hard dependency when unused
+        except ImportError as e:
+            raise ImportError("Pillow (PIL) is required for from_precreated(); install 'Pillow'") from e
+        with Image.open(image_path) as img:
+            # Convert to RGB to ensure R channel exists, then to grayscale 'L' is also fine
+            # FMG reads the red channel; most of these PNGs are grayscale
+            img2 = img.convert("RGB").resize((self.config.cells_x, self.config.cells_y), Image.BILINEAR)
+            arr = np.asarray(img2, dtype=np.uint8)  # shape (H, W, 3)
+            red = arr[:, :, 0].astype(np.float32) / 255.0  # normalize 0..1
+
+        # Apply FMG power curve
+        powered = np.where(red < 0.2, red, 0.2 + (red - 0.2) ** 0.8)
+        h = np.floor(np.clip(powered * 100.0, 0.0, 100.0)).astype(np.uint8)
+
+        # Flatten row-major to match grid point ordering (y-major outer, x-major inner)
+        flat = h.reshape(-1)
+        if flat.size != self.n_cells:
+            # If counts differ due to rounding, pad or crop conservatively
+            n = min(flat.size, self.n_cells)
+            out = np.zeros(self.n_cells, dtype=np.uint8)
+            out[:n] = flat[:n]
+            self.heights = out.astype(np.float32)
+            return out
+        self.heights = flat.astype(np.float32)
+        return flat

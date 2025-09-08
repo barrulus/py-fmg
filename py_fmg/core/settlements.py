@@ -66,6 +66,7 @@ class Settlement:
     state_id: int = 0
     culture_id: int = 0
     port_id: int = 0  # Feature ID if port, 0 otherwise
+    is_port: bool = False  # Convenience flag for modules that gate naval logic
     religion_id: int = 0  # Religion ID if assigned
     type: str = "Generic"
 
@@ -609,6 +610,26 @@ class Settlements:
         """Calculate cost for state to expand into a cell with specialized state type rules."""
         cost = 0
 
+        # Landmass penalty: discourage crossing to other islands for non-Naval states
+        try:
+            fid_center = None
+            fid_cell = None
+            if hasattr(self.features, 'feature_ids') and hasattr(self.states[state_id], 'center_cell'):
+                cc = int(self.states[state_id].center_cell)
+                fid_center = int(self.features.feature_ids[cc]) if cc < len(self.features.feature_ids) else None
+                fid_cell = int(self.features.feature_ids[cell_id]) if cell_id < len(self.features.feature_ids) else None
+            if fid_center and fid_cell and fid_center != fid_cell and state_type != "Naval":
+                # Determine if crossing is via lake vs ocean
+                f_center = self.features.features[fid_center] if fid_center < len(self.features.features) else None
+                f_cell = self.features.features[fid_cell] if fid_cell < len(self.features.features) else None
+                # If either feature is ocean, apply very high penalty; if lake, moderate
+                if (getattr(f_center, 'type', None) == 'ocean') or (getattr(f_cell, 'type', None) == 'ocean'):
+                    cost += 2000  # essentially forbids non-Naval cross-ocean annexation
+                else:
+                    cost += 400   # allow some lake-crossing leakage at much higher cost
+        except Exception:
+            pass
+
         # Culture affinity (enhanced for cultural diversity)
         cell_culture = self.cultures.cell_cultures[cell_id] if hasattr(self.cultures, 'cell_cultures') else 0
         if cell_culture == state_culture:
@@ -1077,6 +1098,8 @@ class Settlements:
 
             # Determine port status
             settlement.port_id = self._determine_port_status(settlement)
+            # Convenience boolean used by other modules (e.g., military, exporters)
+            settlement.is_port = bool(settlement.port_id > 0)
 
             # Calculate population
             base_pop = max(self.cell_suitability[cell_id] / 8 + settlement.id / 1000 + (cell_id % 100) / 1000, 0.1)

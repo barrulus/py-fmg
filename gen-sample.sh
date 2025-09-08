@@ -1,4 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
+set -euo pipefail
 
 # ------------------------------------------------------------
 # py-fmg CLI switches reference (single source of truth)
@@ -24,7 +26,8 @@
 # Hydrology
 # --min-river-flux <float>     : Minimum flux to form a visible river (default: 30.0)
 # --precip-mult <float>        : Multiplier for precipitation in hydrology (default: 1.0)
-# --snap-to-coast-steps <int>  : Steps to snap river mouths to coast (default: 3)
+# --snap-to-coast-steps <int>  : Steps to extend river mouths toward ocean (default: 3; 0 = unlimited)
+# --resolve-steps <int>        : Max iterations for depression resolution (default: 100)
 
 # Climate tuning
 # --equator-temp <float>       : Sea-level temperature at equator (°C) (default: None)
@@ -46,15 +49,18 @@
 # - Boolean flags have no value (e.g., --no-relax, --export-map-minimal).
 # - Combine hydrology and climate switches to shape river patterns (e.g., ITCZ boost).
 
-python cli/main.py \
+# Use module invocation to run the CLI within Poetry env
+poetry run python -m cli.main \
   --width 1400 \
   --height 800 \
   --cells 50000 \
-  --seed 987654321 \
+  --seed 987656789 \
   --template continents \
   --preview \
-  --burgs-number 3000
-  # --snap-to-coast-steps 5
+  --geojson \
+  --snap-to-coast-steps 0 \
+  --burgs-number 2000
+  # --export-map
 
   # Optional example toggles
   # --target-land 0.45 \
@@ -68,8 +74,12 @@ python cli/main.py \
   # --town-spacing-power 0.65 \
   # --urbanization-rate 0.12 \
   # --export-map  # writes to default {template}_{timestamp}.map under --out
+  # --precreated europe  # use a bundled precreated heightmap instead of --template
+  # --list-precreated    # list valid precreated heightmap IDs and exit
+  # --parity-mode        # disable enhanced flow and coast snapping for FMG parity
 
 # Quick tips
 # - For more headwaters: lower --min-river-flux (e.g., 20) and increase --precip-mult (1.2–1.5).
 # - For wetter tropics: increase --itcz-boost (1.5–2.0) and widen --itcz-width (12–20).
 # - For more towns: increase --burgs-number and lower --town-spacing-base.
+# - To reduce inland river endings: set --snap-to-coast-steps to a larger value or 0 (unlimited) and increase --resolve-steps.

@@ -1,146 +1,224 @@
 # Python Fantasy Map Generator (py-fmg)
 
-A headless procedural map generation service created by porting the world-generation algorithms from [Azgaar's Fantasy Map Generator (FMG)](https://github.com/Azgaar/Fantasy-Map-Generator) into a standalone Python application. This service leverages Python's premier geospatial libraries to store generated map data in a PostGIS-enabled PostgreSQL database, designed specifically for use by procedural Role-Playing Games (RPGs).
+Headless Python port of Azgaar's Fantasy Map Generator (FMG) focused on producing validated GeoJSON for ingestion into PostGIS. Includes Leaflet-based HTML previews and optional static PNGs for debugging and sharing.
+
+Targets: cells, burgs, states, provinces, routes, rivers, regiments, markers.
 
 ## Project Vision
 
 ### Core Philosophy
 
-- **True Logic Port**: Re-implementation of FMG's core algorithms in Python, not UI automation
-- **Hierarchical Procedural Generation**: Multi-level detail from continents down to future street-level expansion
-- **Data-First Architecture**: PostGIS database as the canonical source of truth, not static files
-- **PostGIS + QGIS Integration**: High-performance spatial database with QGIS for visualization and authoring
-
-### Architecture Overview
-
-```
-┌─────────────────┐      ┌─────────────────────────────────┐      ┌────────────────────┐
-│   API / CLI     ├──────►   Python Generation Service     ├──────►   PostGIS Database │
-│ (FastAPI/Click) │      │ (FMG Logic + City Generators)   │      │ (PostgreSQL)       │
-└─────────────────┘      └─────────────────────────────────┘      └────────────────────┘
-```
+- True logic port of FMG algorithms (no UI automation)
+- Hierarchical procedural generation (continents → regions → cities)
+- Data-first architecture: PostGIS as the source of truth
+- GeoJSON interchange; no QGIS dependency (QGIS optional for analysis)
+- Leaflet previews for quick iteration and validation
 
 ## Features
 
-- **Complete Voronoi Generation**: Full FMG-compatible Voronoi graph generation with Lloyd's relaxation
-- **Height Pre-allocation**: Heights array initialized during grid creation for stateful operations
-- **Grid Reuse**: Support for "keep land, reroll mountains" workflow matching FMG's interactive design
-- **Cell Packing (reGraph)**: Performance optimization that reduces ~10,000 cells to ~4,500 by filtering deep ocean
-- **Coastal Enhancement**: Automatic addition of intermediate points along coastlines
-- **Heightmap Generation**: Full suite of terrain generation algorithms (hills, pits, ranges, straits, etc.)
-- **Template Support**: Named templates for quick map generation
-- **PRNG Synchronization**: Fixed-order heightmap operations ensure deterministic terrain generation
-- **FMG Blob Spreading**: Accurate implementation of FMG's blob spreading algorithm with proper quirks handling
-- **Comprehensive Testing**: End-to-end tests with seed-based reproducibility
+- Complete Voronoi grid generation with Lloyd relaxation
+- Height pre-allocation and grid reuse (“keep land, reroll mountains”)
+- Cell packing (reGraph) to drop deep ocean cells
+- Coastal enhancement via intermediate points
+- Heightmap templates (hills, pits, ranges, straits, etc.)
+- Deterministic PRNG sequencing across steps
+- Accurate FMG blob spreading behavior
+- Validated GeoJSON export; Leaflet HTML preview generator
+- Seeded tests and snapshot validation
 
-## Standard Setup
+## Quick Start
 
-1. Install dependencies:
+### Prerequisites
+
+1) Python 3.13+
+2) PostgreSQL 17+ with PostGIS 3+
+3) Poetry (dependency management)
+
+### Setup
+
+1) Install dependencies
 
 ```bash
 poetry install
 ```
 
-2. Configure environment:
-   Copy `.env.example` to `.env` and update database credentials.
+2) Configure environment
 
-3. Start PostgreSQL with PostGIS extension.
+```bash
+cp .env.example .env
+# update values
+DB_USER=your_user
+DB_PASSWORD=your_password
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=py-fmg
+```
 
-4. Run the API:
+3) Initialize database (ensure PostGIS enabled)
+
+```sql
+CREATE DATABASE "py-fmg";
+\c py-fmg
+CREATE EXTENSION postgis;
+```
+
+4) Run tests (optional, recommended)
+
+```bash
+poetry run pytest -q
+```
+
+5) Start API server
 
 ```bash
 poetry run uvicorn py_fmg.api.main:app --reload
+# http://localhost:8000  (docs: /docs)
 ```
 
-### CLI Reference
+### Basic Usage
 
-For all CLI flags and their default values, see:
-`QUICKSTART.md#cli-switches`
-
-Example quick run (writes GeoJSON + Leaflet previews):
+- API map generation
 
 ```bash
-python cli/main.py --width 1200 --height 800 --cells 20000 --template continents --preview --geojson
+curl -X POST "http://localhost:8000/maps/generate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "seed": "test123",
+    "width": 800,
+    "height": 600,
+    "cells_desired": 10000,
+    "map_name": "Test Map",
+    "template": "volcano"
+  }'
+
+# Check job status
+curl "http://localhost:8000/jobs/{job_id}"
+
+# List generated maps
+curl "http://localhost:8000/maps"
 ```
 
-## NixOs Setup
+- Core components in Python
 
-### NixOS Setup
+```python
+from py_fmg.core.voronoi_graph import GridConfig, generate_voronoi_graph
 
-1. Enable the Nix development shell:
+config = GridConfig(width=800, height=600, cells_desired=1000)
+graph = generate_voronoi_graph(config, seed="test123")
+print(len(graph.points), sum(graph.cell_border_flags))
+```
+
+- CLI quick run (GeoJSON + Leaflet preview)
+
+```bash
+python -m cli.main \
+  --width 1200 --height 800 --cells 20000 \
+  --template continents --preview --geojson \
+  --snap-to-coast-steps 0   # 0 = unlimited
+```
+
+## CLI Reference
+
+Common switches (see full list via `python -m cli.main --help`):
+
+```text
+# Core map params
+--width <float>               # Map width (px) (default: 1000)
+--height <float>              # Map height (px) (default: 800)
+--cells <int>                 # Target number of cells (default: 10000)
+--seed <str>                  # Random seed (string)
+--out <path>                  # Output root directory (default: out)
+--template <str>              # Heightmap template (default: continents)
+--target-land <0..1>          # Target land fraction (auto sea level)
+
+# Preview
+--preview [basename]          # Generate Leaflet layers preview
+--preview-scale <float>       # Preview scale factor (default: 1.0)
+--no-relax                    # Disable Lloyd relaxation
+
+# GeoJSON export
+--geojson [basename]          # Write GeoJSON artifacts (optional basename)
+
+# FMG .map export
+--export-map [path]           # Export FMG .map (optional)
+--export-map-minimal          # Minimal .map with safe defaults
+
+# Hydrology
+--min-river-flux <float>      # Minimum flux to form visible river
+--precip-mult <float>         # Precipitation multiplier
+--snap-to-coast-steps <int>   # Steps to extend mouths toward ocean (0 = unlimited)
+--resolve-steps <int>         # Max iterations for depression resolution
+
+# Climate tuning
+--equator-temp <float>        # Sea-level temperature at equator (°C)
+--tropical-gradient <float>   # Temperature drop per degree in tropics (°C/°)
+--itcz-width <float>          # ITCZ half-width around equator (degrees)
+--itcz-boost <float>          # ITCZ precipitation multiplier
+
+# Settlements and states
+--states-number <int>         # Target number of states (capitals)
+--burgs-number <int>          # Target number of towns (1000 = auto)
+--town-spacing-base <int>     # Base divisor (lower = more towns)
+--town-spacing-power <float>  # Power adjustment (lower = more towns)
+--urbanization-rate <float>   # Urbanization rate (0..1)
+```
+
+Tips
+- More headwaters: lower `--min-river-flux` (e.g., 20) and raise `--precip-mult` (1.2–1.5)
+- Wetter tropics: increase `--itcz-boost` (1.5–2.0) and widen `--itcz-width` (12–20)
+- More towns: increase `--burgs-number` and lower `--town-spacing-base`
+
+### Precreated Heightmaps
+
+- List bundled heightmaps: `python -m cli.main --list-precreated`
+- Use a precreated heightmap: `python -m cli.main --precreated europe --geojson --preview`
+
+## NixOS Setup
+
+1) Enter development shell
 
 ```bash
 nix develop
 ```
 
-2. Install Poetry dependencies within the Nix shell:
+2) Install dependencies (inside shell)
 
 ```bash
 poetry install
 ```
 
-3. Configure PostgreSQL service in your NixOS configuration or use a containerized approach:
+3) Start Postgres with PostGIS (systemd or container)
 
 ```bash
-# Option 1: System PostgreSQL (requires NixOS config)
+# System service
 sudo systemctl start postgresql
-# Option 2: Docker/Podman container
+
+# Or Podman/Docker
 podman run -d --name postgres-postgis \
   -e POSTGRES_PASSWORD=your_password \
   -e POSTGRES_DB=py_fmg \
   -p 5432:5432 \
-  postgis/postgis:15-3.3
+  postgis/postgis:17-3.3
 ```
 
-4. Run the API:
+4) Run API
 
 ```bash
 poetry run uvicorn py_fmg.api.main:app --reload
 ```
 
-## Development
-
-- Run tests: `poetry run pytest`
-- Format code: `poetry run black . && poetry run isort .`
-- Type check: `poetry run mypy py_fmg`
-- Lint: `poetry run ruff check py_fmg`
-
 ## RPG Integration
 
-The system is designed for real-time spatial queries from game engines:
+Example PostGIS queries from a game engine:
 
 ```sql
 -- What state is the player in?
 SELECT * FROM states WHERE ST_Contains(geom, player_location);
 
--- Are there any taverns within 50 meters?
+-- Any taverns within 50 meters?
 SELECT * FROM buildings WHERE type = 'tavern' AND ST_DWithin(geom, player_location, 50);
 
--- Find the nearest road
+-- Nearest road
 SELECT * FROM roads ORDER BY geom <-> player_location LIMIT 1;
 ```
 
-## Future Roadmap
-
-### Phase 2: Street-Scale Generation
-
-- Specialized city generator module with urban algorithms
-- Agent-based systems for organic road networks
-- Building footprint generation
-- On-demand detail generation via API
-
-### Phase 3: Extended Features
-
-- Rivers and water bodies
-- Advanced biome generation
-- Cultural and political boundaries
-- Trade routes and economic simulation
-
-## Technology Stack
-
-- **Language**: Python 3.10+
-- **API Framework**: FastAPI
-- **Geospatial Processing**: GeoPandas, Shapely, Rasterio
-- **Database**: PostgreSQL 14+ with PostGIS 3+
-- **Numerical/Scientific**: NumPy, SciPy
-- **Visualization**: QGIS 3.x

@@ -42,16 +42,133 @@ def _ensure_len(arr: np.ndarray, n: int, fill: int = 0, dtype: Optional[str] = N
 
 
 def _build_svg(width: float, height: float) -> str:
-    # Minimal valid FMG SVG skeleton
-    layers = [
-        "ocean", "coastline", "lakes", "rivers", "terrain", "relief",
-        "states", "provinces", "routes", "labels", "burgs", "markers",
-    ]
-    groups = "\n".join(f'<g id="{gid}"></g>' for gid in layers)
-    return (
-        f"<svg id=\"map\" xmlns=\"http://www.w3.org/2000/svg\" width=\"{int(width)}\" height=\"{int(height)}\">"
-        f"<g id=\"viewbox\">{groups}</g></svg>"
-    )
+    """
+    Build an FMG-compatible SVG skeleton.
+
+    FMG expects a fairly rich structure under #map, including defs (with #deftemp
+    and masks) and a set of named layer groups under #viewbox. If these groups
+    are missing, the loader will not be able to attach layers and styles, which
+    can manifest as a striped / semi-rendered background.
+
+    This skeleton mirrors FMG's default structure closely, while keeping the
+    content minimal. The important bit is that all expected ids exist so the
+    loader can select and populate them.
+    """
+
+    w = int(width)
+    h = int(height)
+
+    # Keep this as a single string (no external assets required)
+    svg = f"""
+<svg id=\"map\" xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\">
+  <defs>
+    <g id=\"deftemp\">
+      <g id=\"featurePaths\"></g>
+      <g id=\"textPaths\"></g>
+      <g id=\"statePaths\"></g>
+      <g id=\"defs-emblems\"></g>
+      <mask id=\"land\"></mask>
+      <mask id=\"water\"></mask>
+      <mask id=\"fog\" style=\"stroke-width:10;stroke:black;stroke-linejoin:round;stroke-opacity:0.1\">
+        <rect x=\"0\" y=\"0\" width=\"100%\" height=\"100%\" fill=\"white\" stroke=\"none\" />
+      </mask>
+    </g>
+    <!-- Lightweight placeholder pattern so references to url(#oceanic) resolve -->
+    <pattern id=\"oceanic\" width=\"100\" height=\"100\" patternUnits=\"userSpaceOnUse\">
+      <rect x=\"0\" y=\"0\" width=\"100\" height=\"100\" fill=\"#466eab\" opacity=\"0.2\" />
+    </pattern>
+    <mask id=\"vignette-mask\">
+      <rect x=\"0\" y=\"0\" width=\"100%\" height=\"100%\" fill=\"white\"></rect>
+      <rect id=\"vignette-rect\" fill=\"black\"></rect>
+    </mask>
+  </defs>
+  <g id=\"viewbox\">
+    <g id=\"ocean\">
+      <g id=\"oceanLayers\"></g>
+      <g id=\"oceanPattern\"></g>
+    </g>
+    <g id=\"lakes\">
+      <g id=\"freshwater\"></g>
+      <g id=\"salt\"></g>
+      <g id=\"sinkhole\"></g>
+      <g id=\"frozen\"></g>
+      <g id=\"lava\"></g>
+      <g id=\"dry\"></g>
+    </g>
+    <g id=\"landmass\"></g>
+    <g id=\"texture\"></g>
+    <g id=\"terrs\">
+      <g id=\"oceanHeights\"></g>
+      <g id=\"landHeights\"></g>
+    </g>
+    <g id=\"topography\"></g>
+    <g id=\"biomes\"></g>
+    <g id=\"cells\"></g>
+    <g id=\"gridOverlay\"></g>
+    <g id=\"coordinates\"></g>
+    <g id=\"compass\"></g>
+    <g id=\"rivers\"></g>
+    <g id=\"terrain\"></g>
+    <g id=\"relig\"></g>
+    <g id=\"cults\"></g>
+    <g id=\"regions\">
+      <g id=\"statesBody\"></g>
+      <g id=\"statesHalo\"></g>
+    </g>
+    <g id=\"provs\"></g>
+    <g id=\"zones\"></g>
+    <g id=\"borders\">
+      <g id=\"stateBorders\"></g>
+      <g id=\"provinceBorders\"></g>
+    </g>
+    <g id=\"routes\">
+      <g id=\"roads\"></g>
+      <g id=\"trails\"></g>
+      <g id=\"searoutes\"></g>
+    </g>
+    <g id=\"temperature\"></g>
+    <g id=\"coastline\">
+      <g id=\"sea_island\"></g>
+      <g id=\"lake_island\"></g>
+    </g>
+    <g id=\"ice\"></g>
+    <g id=\"prec\"></g>
+    <g id=\"population\">
+      <g id=\"rural\"></g>
+      <g id=\"urban\"></g>
+    </g>
+    <g id=\"emblems\">
+      <g id=\"burgEmblems\"></g>
+      <g id=\"provinceEmblems\"></g>
+      <g id=\"stateEmblems\"></g>
+    </g>
+    <g id=\"labels\">
+      <g id=\"burgLabels\"></g>
+      <g id=\"states\"></g>
+      <g id=\"addedLabels\"></g>
+    </g>
+    <g id=\"icons\">
+      <g id=\"burgIcons\">
+        <g id=\"cities\"></g>
+        <g id=\"towns\"></g>
+      </g>
+      <g id=\"anchors\">
+        <g id=\"cities\"></g>
+        <g id=\"towns\"></g>
+      </g>
+    </g>
+    <g id=\"armies\"></g>
+    <g id=\"markers\"></g>
+    <g id=\"fogging-cont\"><g id=\"fogging\"></g></g>
+    <g id=\"ruler\"></g>
+    <g id=\"debug\"></g>
+  </g>
+  <g id=\"scaleBar\"><rect id=\"scaleBarBack\"></rect></g>
+  <g id=\"vignette\" mask=\"url(#vignette-mask)\"><rect x=\"0\" y=\"0\" width=\"100%\" height=\"100%\" /></g>
+</svg>
+""".strip()
+
+    return svg
 
 
 def export_fmg_map(
@@ -69,6 +186,19 @@ def export_fmg_map(
     classifier: Optional[BiomeClassifier] = None,
     version: str = "1.108.0",
     minimal: bool = False,
+    # Extended entities for full export
+    settlements: Optional[Dict[int, Any]] = None,
+    states: Optional[Dict[int, Any]] = None,
+    provinces: Optional[Dict[int, Any]] = None,
+    cell_provinces: Optional[Sequence[int]] = None,
+    cultures: Optional[Dict[int, Any]] = None,
+    cell_cultures: Optional[Sequence[int]] = None,
+    religions: Optional[Dict[int, Any]] = None,
+    cell_religions: Optional[Sequence[int]] = None,
+    land_routes: Optional[List[Any]] = None,
+    sea_routes: Optional[List[Any]] = None,
+    markers: Optional[List[Any]] = None,
+    regiments_by_state: Optional[Dict[int, List[Any]]] = None,
 ) -> Path:
     n = len(graph.points)
     map_id = map_id or int(np.random.randint(10**9))
@@ -92,6 +222,42 @@ def export_fmg_map(
     state = np.zeros(n, dtype=np.uint16)
     religion = np.zeros(n, dtype=np.uint16)
     province = np.zeros(n, dtype=np.uint16)
+
+    # Populate pack arrays where data is available
+    if hasattr(graph, "cell_population") and graph.cell_population is not None:
+        try:
+            pop = _ensure_len(np.asarray(graph.cell_population, dtype=float), n, 0.0, dtype=np.float32)
+        except Exception:
+            pass
+    if hasattr(graph, "cell_state") and graph.cell_state is not None:
+        try:
+            state = _ensure_len(np.asarray(graph.cell_state, dtype=np.uint16), n, 0, dtype=np.uint16)
+        except Exception:
+            pass
+    if cell_cultures is not None:
+        try:
+            culture = _ensure_len(np.asarray(cell_cultures, dtype=np.uint16), n, 0, dtype=np.uint16)
+        except Exception:
+            pass
+    if cell_religions is not None:
+        try:
+            religion = _ensure_len(np.asarray(cell_religions, dtype=np.uint16), n, 0, dtype=np.uint16)
+        except Exception:
+            pass
+    if cell_provinces is not None:
+        try:
+            province = _ensure_len(np.asarray(cell_provinces, dtype=np.uint16), n, 0, dtype=np.uint16)
+        except Exception:
+            pass
+    if settlements:
+        # Fill burg array: point cell -> settlement id
+        try:
+            for sid, s in settlements.items():
+                cid = int(getattr(s, "cell_id", -1))
+                if 0 <= cid < n:
+                    burg[cid] = int(sid)
+        except Exception:
+            pass
 
     # Rivers JSON: build from our hydrology structures if not provided
     if rivers_json is None and hasattr(graph, "rivers"):
@@ -202,14 +368,185 @@ def export_fmg_map(
     # FMG reGraph (which reads grid.features) can safely access .type
     grid_general["features"] = flist
     grid_general_line = json.dumps(_to_serializable(grid_general))
-    cultures_json = json.dumps([])
-    states_json = json.dumps([])
-    burgs_json = json.dumps([])
-    religions_json = json.dumps([])
-    provinces_json = json.dumps([])
-    markers_json = json.dumps([])
-    cell_routes_json = json.dumps([])
-    routes_json = json.dumps([])
+    # Build extended JSON blocks
+    def build_burgs()-> List[Dict[str, Any]]:
+        if not settlements:
+            return []
+        out: List[Dict[str, Any]] = []
+        for sid, s in sorted(settlements.items(), key=lambda kv: int(kv[0])):
+            out.append(
+                {
+                    "i": int(sid),
+                    "name": getattr(s, "name", f"Burg {sid}"),
+                    "cell": int(getattr(s, "cell_id", 0)),
+                    "x": float(getattr(s, "x", 0.0)),
+                    "y": float(getattr(s, "y", 0.0)),
+                    "population": float(getattr(s, "population", 0.0)),
+                    "capital": bool(getattr(s, "is_capital", False)),
+                    "state": int(getattr(s, "state_id", 0)),
+                    "culture": int(getattr(s, "culture_id", 0)),
+                    "port": int(1 if getattr(s, "is_port", False) or getattr(s, "port_id", 0) > 0 else 0),
+                    "citadel": bool(getattr(s, "citadel", False)),
+                    "plaza": bool(getattr(s, "plaza", False)),
+                    "walls": bool(getattr(s, "walls", False)),
+                    "shanty": bool(getattr(s, "shanty", False)),
+                    "temple": bool(getattr(s, "temple", False)),
+                }
+            )
+        return out
+
+    def build_states() -> List[Dict[str, Any]]:
+        if not states:
+            return []
+        out: List[Dict[str, Any]] = []
+        for sid, st in sorted(states.items(), key=lambda kv: int(kv[0])):
+            out.append(
+                {
+                    "i": int(sid),
+                    "name": getattr(st, "name", f"State {sid}"),
+                    "capital": int(getattr(st, "capital_id", 0)),
+                    "color": getattr(st, "color", "#888888"),
+                    "expansionism": float(getattr(st, "expansionism", 1.0)),
+                    "type": getattr(st, "type", "Generic"),
+                    "center": int(getattr(st, "center_cell", 0)),
+                    "cells": [int(c) for c in getattr(st, "territory_cells", [])],
+                }
+            )
+        return out
+
+    def build_provinces() -> List[Dict[str, Any]]:
+        if not provinces:
+            return []
+        out: List[Dict[str, Any]] = []
+        for pid, p in sorted(provinces.items(), key=lambda kv: int(kv[0])):
+            out.append(
+                {
+                    "i": int(pid),
+                    "name": getattr(p, "name", f"Province {pid}"),
+                    "state": int(getattr(p, "state_id", 0)),
+                    "center": int(getattr(p, "center_cell", 0)),
+                    "burg": int(getattr(p, "burg_id", 0)),
+                }
+            )
+        return out
+
+    def build_cultures() -> List[Dict[str, Any]]:
+        if not cultures:
+            return []
+        out: List[Dict[str, Any]] = []
+        for cid, c in sorted(cultures.items(), key=lambda kv: int(kv[0])):
+            out.append(
+                {
+                    "i": int(cid),
+                    "name": getattr(c, "name", f"Culture {cid}"),
+                    "color": getattr(c, "color", "#999999"),
+                    "type": getattr(c, "type", "Generic"),
+                    "center": int(getattr(c, "center", 0)),
+                }
+            )
+        return out
+
+    def build_religions() -> List[Dict[str, Any]]:
+        if not religions:
+            return []
+        out: List[Dict[str, Any]] = []
+        for rid, r in sorted(religions.items(), key=lambda kv: int(kv[0])):
+            out.append(
+                {
+                    "i": int(rid),
+                    "name": getattr(r, "name", f"Religion {rid}"),
+                    "color": getattr(r, "color", "#aaaaaa"),
+                    "type": getattr(r, "type", "Organized"),
+                    "form": getattr(r, "form", "Polytheism"),
+                    "center": int(getattr(r, "center", 0)),
+                    "expansion": getattr(r, "expansion", "global"),
+                    "expansionism": float(getattr(r, "expansionism", 1.0)),
+                    "code": getattr(r, "code", f"REL{rid}"),
+                    "origins": [int(x) for x in getattr(r, "origins", [])],
+                }
+            )
+        return out
+
+    def build_markers() -> List[Dict[str, Any]]:
+        if not markers:
+            return []
+        out: List[Dict[str, Any]] = []
+        for m in markers:
+            out.append(
+                {
+                    "i": int(getattr(m, "i", 0)),
+                    "type": getattr(m, "type", "marker"),
+                    "icon": getattr(m, "icon", ""),
+                    "x": float(getattr(m, "x", 0.0)),
+                    "y": float(getattr(m, "y", 0.0)),
+                    "cell": int(getattr(m, "cell", 0)),
+                    "name": getattr(m, "name", ""),
+                    "legend": getattr(m, "legend", ""),
+                    "dx": getattr(m, "dx", None),
+                    "dy": getattr(m, "dy", None),
+                    "px": getattr(m, "px", None),
+                }
+            )
+        return out
+
+    def build_routes() -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for src in (land_routes or []):
+            out.append(
+                {
+                    "i": int(getattr(src, "id", 0)),
+                    "kind": getattr(src, "kind", "land"),
+                    "class": getattr(src, "cls", "road"),
+                    "start": int(getattr(src, "start_settlement", 0)),
+                    "end": int(getattr(src, "end_settlement", 0)),
+                    "cells": [int(c) for c in (getattr(src, "cells", None) or [])],
+                    "points": [[float(x), float(y)] for (x, y) in getattr(src, "coords", [])],
+                }
+            )
+        for src in (sea_routes or []):
+            out.append(
+                {
+                    "i": int(getattr(src, "id", 0)),
+                    "kind": getattr(src, "kind", "sea"),
+                    "class": getattr(src, "cls", "coastal"),
+                    "start": int(getattr(src, "start_settlement", 0)),
+                    "end": int(getattr(src, "end_settlement", 0)),
+                    "cells": [int(c) for c in (getattr(src, "cells", None) or [])],
+                    "points": [[float(x), float(y)] for (x, y) in getattr(src, "coords", [])],
+                }
+            )
+        return out
+
+    def build_regiments() -> List[Dict[str, Any]]:
+        if not regiments_by_state:
+            return []
+        out: List[Dict[str, Any]] = []
+        for sid, regs in regiments_by_state.items():
+            for r in regs:
+                out.append(
+                    {
+                        "i": int(getattr(r, "i", 0)),
+                        "state": int(getattr(r, "state", sid)),
+                        "a": int(getattr(r, "a", 0)),
+                        "cell": int(getattr(r, "cell", 0)),
+                        "x": float(getattr(r, "x", 0.0)),
+                        "y": float(getattr(r, "y", 0.0)),
+                        "u": getattr(r, "u", {}),
+                        "n": int(getattr(r, "n", 0)),
+                        "name": getattr(r, "name", "Regiment"),
+                        "icon": getattr(r, "icon", ""),
+                    }
+                )
+        return out
+
+    burgs_json = json.dumps(_to_serializable(build_burgs()))
+    states_json = json.dumps(_to_serializable(build_states()))
+    cultures_json = json.dumps(_to_serializable(build_cultures()))
+    religions_json = json.dumps(_to_serializable(build_religions()))
+    provinces_json = json.dumps(_to_serializable(build_provinces()))
+    markers_json = json.dumps(_to_serializable(build_markers()))
+    routes_json = json.dumps(_to_serializable(build_routes()))
+    cell_routes_json = json.dumps([])  # keep as placeholder (per-cell paths optional)
     zones_json = json.dumps([])
 
     # Lines in FMG order
@@ -237,7 +574,7 @@ def export_fmg_map(
         _csv(fl),
         _csv_float(pop),
         _csv(rivers_cell),
-        json.dumps([]),
+        json.dumps(_to_serializable(build_regiments())),
         _csv(slope),
         _csv(state),
         _csv(religion),

@@ -19,6 +19,10 @@
           geopandas
           rasterio
           psycopg2
+          pillow
+          structlog
+          pydantic
+          "pydantic-settings"
           
           # Web framework
           fastapi
@@ -39,12 +43,13 @@
             # Python environment
             pythonEnv
             poetry
-            
-            
+
+
             # Geospatial libraries
             gdal
             geos
             proj
+            zlib
             
             # Development tools
             git
@@ -64,7 +69,7 @@
             export PROJ_LIB="${pkgs.proj}/share/proj"
             
             # Add library paths for compiled packages
-            export LD_LIBRARY_PATH="${pkgs.gcc-unwrapped.lib}/lib:${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
+            export LD_LIBRARY_PATH="${pkgs.gcc-unwrapped.lib}/lib:${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.zlib}/lib:$LD_LIBRARY_PATH"
           '';
         };
       });

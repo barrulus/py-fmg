@@ -57,6 +57,23 @@ def regraph(graph: VoronoiGraph) -> VoronoiGraph:
         raise ValueError("graph.distance_field not found. Call Features.markup_grid() first!")
     
     cell_types = graph.distance_field
+
+    # Helpers to determine water feature type using Features markup
+    def feature_type(cell_idx: int) -> str | None:
+        try:
+            fids = getattr(graph, 'feature_ids', None)
+            feats = getattr(graph, 'features', None)
+            if fids is None or feats is None:
+                return None
+            if 0 <= cell_idx < len(fids):
+                fid = int(fids[cell_idx])
+                if 0 < fid < len(feats):
+                    f = feats[fid]
+                    if f is not None:
+                        return getattr(f, 'type', None)
+        except Exception:
+            return None
+        return None
     
     # Collect new points
     new_points = []
@@ -70,15 +87,21 @@ def regraph(graph: VoronoiGraph) -> VoronoiGraph:
         cell_type = cell_types[i]
         height = graph.heights[i]
         
-        # CRITICAL: Match FMG's exact exclusion logic
-        # if (height < 20 && type !== -1 && type !== -2) continue;
-        if height < 20 and cell_type != -1 and cell_type != -2:
-            continue  # exclude all deep ocean points
-            
-        # if (type === -2 && (i % 4 === 0 || features[gridCells.f[i]].type === "lake")) continue;
-        # For now, we'll just check i % 4 since we don't have lake feature detection yet
-        if cell_type == -2 and i % 4 == 0:
-            continue  # exclude non-coastal lake points
+        # Feature-aware exclusion of water cells:
+        # - Keep coastal water (WATER_COAST = -1)
+        # - Exclude deep ocean (non-coastal ocean water)
+        # - Exclude interior lake water (keep shoreline only)
+        if height < 20:
+            if cell_type == -1:
+                pass  # keep coastal water
+            else:
+                ftype = feature_type(i)
+                if ftype == 'ocean':
+                    continue  # drop deep ocean
+                if ftype == 'lake':
+                    continue  # drop interior lake water (shoreline kept via -1)
+                # If unknown type, treat as deep water
+                continue
         
         # Add the main point
         x, y = graph.points[i]
@@ -179,4 +202,3 @@ def regraph(graph: VoronoiGraph) -> VoronoiGraph:
                 coastal_points_added=n_packed - np.sum(new_grid_indices == np.arange(len(new_grid_indices))))
     
     return packed
-

@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from geoalchemy2 import Geometry
 import uuid
 from datetime import datetime
+from ..config.config import settings
 
 Base = declarative_base()
 
@@ -67,7 +68,7 @@ class Culture(Base):
     name_base = Column(Integer, nullable=False, default=0)  # Index into name bases (0-11)
     
     # Territory as polygon
-    geometry = Column(Geometry("MULTIPOLYGON", srid=4326))
+    geometry = Column(Geometry("MULTIPOLYGON", srid=settings.local_srid))
     
     # Statistics
     area_km2 = Column(Float)
@@ -113,7 +114,7 @@ class Religion(Base):
     origins = Column(ARRAY(Integer))  # Parent religion IDs
     
     # Territory as polygon
-    geometry = Column(Geometry("MULTIPOLYGON", srid=4326))
+    geometry = Column(Geometry("MULTIPOLYGON", srid=settings.local_srid))
     
     # Statistics
     area_km2 = Column(Float)
@@ -155,7 +156,7 @@ class State(Base):
     removed = Column(Boolean, default=False)
     
     # Territory management
-    geometry = Column(Geometry("POLYGON", srid=4326))
+    geometry = Column(Geometry("POLYGON", srid=settings.local_srid))
     territory_cell_indices = Column(ARRAY(Integer))  # Alternative to complex geometry
     
     # Statistics
@@ -190,7 +191,7 @@ class Settlement(Base):
     population = Column(Integer)
     
     # Location
-    geometry = Column(Geometry("POINT", srid=4326))
+    geometry = Column(Geometry("POINT", srid=settings.local_srid))
     cell_index = Column(Integer)  # Reference to original grid cell
     
     # Basic properties
@@ -229,7 +230,9 @@ class River(Base):
     name = Column(String(255))
     
     # Geometry as linestring
-    geometry = Column(Geometry("LINESTRING", srid=4326))
+    geometry = Column(Geometry("LINESTRING", srid=settings.local_srid))
+    # New optional polygonal corridor geometry for cartographic parity
+    polygon_geometry = Column(Geometry("POLYGON", srid=settings.local_srid))
     
     # Properties
     length_km = Column(Float)
@@ -249,6 +252,51 @@ class River(Base):
     tributaries = relationship("River", remote_side=[id])
 
 
+class RoutePath(Base):
+    """Route paths (land and sea)."""
+
+    __tablename__ = "routes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    map_id = Column(UUID(as_uuid=True), ForeignKey("maps.id"), nullable=False)
+
+    route_index = Column(Integer, nullable=False)  # Original route index
+    kind = Column(String(10), nullable=False)  # 'land' or 'sea'
+    cls = Column(String(20), nullable=False)  # highway, road, trail, sea-lane, coastal
+    start_settlement_index = Column(Integer, nullable=True)
+    end_settlement_index = Column(Integer, nullable=True)
+
+    geometry = Column(Geometry("LINESTRING", srid=settings.local_srid))
+    distance_units = Column(Float)  # distance in map units
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    map = relationship("Map")
+
+
+class Regiment(Base):
+    """Military regiments."""
+
+    __tablename__ = "regiments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    map_id = Column(UUID(as_uuid=True), ForeignKey("maps.id"), nullable=False)
+
+    regiment_index = Column(Integer, nullable=False)
+    state_index = Column(Integer, nullable=False)
+    name = Column(String(255), nullable=False)
+    icon = Column(String(16))
+    naval = Column(Boolean, default=False)
+    total = Column(Integer)
+    cell_index = Column(Integer)
+    units = Column(JSONB)
+
+    geometry = Column(Geometry("POINT", srid=settings.local_srid))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    map = relationship("Map")
+
+
 class BiomeRegion(Base):
     """Biome/ecological regions with enhanced 13-biome classification."""
     
@@ -266,7 +314,7 @@ class BiomeRegion(Base):
     moisture_band = Column(Integer)     # 0-4 moisture band
     
     # Region as polygon
-    geometry = Column(Geometry("MULTIPOLYGON", srid=4326))
+    geometry = Column(Geometry("MULTIPOLYGON", srid=settings.local_srid))
     
     # Properties
     area_km2 = Column(Float)
@@ -293,7 +341,7 @@ class VoronoiCell(Base):
     cell_index = Column(Integer, nullable=False)  # Index in the packed graph
     
     # Cell geometry as polygon
-    geometry = Column(Geometry("POLYGON", srid=4326))
+    geometry = Column(Geometry("POLYGON", srid=settings.local_srid))
     
     # Height and geographic properties
     height = Column(Integer, nullable=False)  # Height value
@@ -311,6 +359,28 @@ class VoronoiCell(Base):
     
     # Relationships
     map = relationship("Map", back_populates="voronoi_cells")
+
+
+class Marker(Base):
+    """Map markers (POIs)."""
+
+    __tablename__ = "markers"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    map_id = Column(UUID(as_uuid=True), ForeignKey("maps.id"), nullable=False)
+    marker_index = Column(Integer, nullable=False)
+    type = Column(String(64), nullable=False)
+    icon = Column(String(16))
+    name = Column(String(255))
+    legend = Column(Text)
+    cell_index = Column(Integer)
+    dx = Column(Integer)
+    dy = Column(Integer)
+    px = Column(Integer)
+    geometry = Column(Geometry("POINT", srid=settings.local_srid))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    map = relationship("Map")
 
 
 class ClimateData(Base):

@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", description="API host")
     api_port: int = Field(default=9002, description="API port")
 
+    # Spatial reference
+    # Local planar SRID for DB storage/analytics. Defaults to 4326 until
+    # the custom local CRS is registered in PostGIS (see AUDIT_TASKS.md).
+    local_srid: int = Field(default=4326, description="SRID used for geometry writes")
+
     # Generation
     max_map_size: int = Field(default=2048, description="Maximum map size")
     generation_timeout: int = Field(
