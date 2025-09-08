@@ -57,9 +57,10 @@ poetry run python -m cli.main \
   --seed 987656789 \
   --template continents \
   --preview \
-  --geojson \
   --snap-to-coast-steps 0 \
-  --burgs-number 2000
+  --burgs-number 2000 \
+  --min-river-flux 35 \
+  --precip-mult 0.8
   # --export-map
 
   # Optional example toggles
