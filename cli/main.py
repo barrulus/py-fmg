@@ -70,10 +70,10 @@ def main() -> None:
     parser.add_argument("--preview", nargs="?", default=None, const="", help="Enable Leaflet preview (optional basename)")
     parser.add_argument(
         "--preview-layers",
-        type=str,
-        default="all",
+        nargs="+",
+        default=["all"],
         help=(
-            "Comma-separated list of layers to include in preview. "
+            "Layers to include in preview (space- or comma-separated). "
             "Use 'all' or pick from: cells, topography, hillshade, provinces, climate, biomes, "
             "cultures_cells, watermask, burgs, rivers_smooth, rivers_polygons, routes, sea_routes, markers, regiments, coastlines"
         ),
@@ -514,17 +514,28 @@ def main() -> None:
                 "regiments": regiments_fc,
                 "coastlines": coast_fc,
             }
-            sel = str(args.preview_layers or "all").strip()
-            if sel.lower() == "all":
+            # Normalize selection from list of tokens (each may include commas)
+            raw_vals = args.preview_layers if isinstance(args.preview_layers, (list, tuple)) else [args.preview_layers]
+            tokens: list[str] = []
+            for v in raw_vals:
+                if v is None:
+                    continue
+                for part in str(v).split(","):
+                    t = part.strip()
+                    if t:
+                        tokens.append(t.lower())
+            if not tokens:
+                tokens = ["all"]
+
+            if "all" in tokens:
                 selected = set(all_layer_order)
             else:
-                selected = set([s.strip() for s in sel.split(",") if s.strip()])
+                selected = set(tokens)
                 unknown = [s for s in selected if s not in all_layer_order]
                 if unknown:
                     print(f"Warning: unknown preview layers ignored: {', '.join(sorted(unknown))}")
                 selected = {s for s in selected if s in all_layer_order}
                 if not selected:
-                    # Ensure at least something renders
                     selected = {"cells"}
 
             layers_filtered = {name: all_layers[name] for name in all_layer_order if name in selected}

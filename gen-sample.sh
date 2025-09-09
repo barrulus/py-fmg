@@ -17,9 +17,9 @@ set -euo pipefail
 # Preview
 # --preview [basename]         : Generate Leaflet layers preview (default size from --width/--height). Optional basename; defaults to {template}_{timestamp}. (default: disabled)
 # --preview-scale <float>      : Scale factor for preview size (default: 1.0)
-# --preview-layers <csv>       : Comma-separated layers to include in preview. Use 'all' or pick from:
-#                                cells, topography, hillshade, provinces, climate, biomes, cultures_cells,
-#                                watermask, burgs, rivers_smooth, rivers_polygons, routes, sea_routes, markers, regiments, coastlines
+# --preview-layers <list>      : Layers to include (space- or comma-separated). Use 'all' or pick from:
+#                                cells topography hillshade provinces climate biomes cultures_cells watermask burgs
+#                                rivers_smooth rivers_polygons routes sea_routes markers regiments coastlines
 # --no-relax                   : Disable Lloyd relaxation (flag) (default: false)
 
 # FMG .map export
@@ -64,8 +64,9 @@ poetry run python -m cli.main \
   --burgs-number 2000 \
   --min-river-flux 35 \
   --precip-mult 0.8 \
-  --preview-layers topography,hillshade,rivers_smooth,burg
-  # --export-map
+  --preview-layers cells, watermask, coastlines, topography, hillshade, provinces, biomes, cultures_cells, \
+      rivers_smooth, burgs, markers
+
 
   # Optional example toggles
   # --target-land 0.45 \
