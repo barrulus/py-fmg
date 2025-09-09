@@ -63,7 +63,8 @@ poetry run python -m cli.main \
   --snap-to-coast-steps 0 \
   --burgs-number 2000 \
   --min-river-flux 35 \
-  --precip-mult 0.8
+  --precip-mult 0.8 \
+  --preview-layers topography,hillshade,rivers_smooth,burg
   # --export-map
 
   # Optional example toggles
