@@ -171,6 +171,46 @@ def build_topography_fc(graph: VoronoiGraph, map_id: str) -> Dict[str, Any]:
     return {"type": "FeatureCollection", "features": features}
 
 
+def build_hillshade_fc(graph: VoronoiGraph, map_id: str) -> Dict[str, Any]:
+    """Build hillshade-only layer as polygons with per-cell shade value.
+
+    Shade is in [0,1]; consumers can style using fillOpacity or grayscale.
+    """
+    features: List[Dict[str, Any]] = []
+    n = len(graph.points)
+    for i in range(n):
+        ring = _cell_polygon(graph, i)
+        if not ring:
+            continue
+        shade = _compute_hillshade(graph, i)
+        props = {
+            "map_id": map_id,
+            "cell_id": i,
+            "shade": round(float(shade), 3),
+            "layer": "hillshade",
+        }
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "properties": props,
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
+def export_hillshade_geojson(
+    graph: VoronoiGraph,
+    out_dir: str | os.PathLike,
+    map_id: str,
+) -> Path:
+    out_dir = Path(out_dir)
+    layer_dir = out_dir / "geojson" / map_id
+    layer_dir.mkdir(parents=True, exist_ok=True)
+    fc = build_hillshade_fc(graph, map_id)
+    out_path = layer_dir / "hillshade.geojson"
+    out_path.write_text(json.dumps(fc, ensure_ascii=False), encoding="utf-8")
+    return out_path
+
+
 def export_topography_geojson(
     graph: VoronoiGraph,
     out_dir: str | os.PathLike,

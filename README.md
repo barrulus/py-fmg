@@ -134,6 +134,7 @@ Common switches (see full list via `python -m cli.main --help`):
 # Preview
 --preview [basename]          # Generate Leaflet layers preview
 --preview-scale <float>       # Preview scale factor (default: 1.0)
+--preview-layers <csv>        # Comma-separated layers to include (or 'all'): cells, topography, hillshade, provinces, climate, biomes, cultures_cells, watermask, burgs, rivers_smooth, rivers_polygons, routes, sea_routes, markers, regiments, coastlines
 --no-relax                    # Disable Lloyd relaxation
 
 # GeoJSON export
@@ -221,4 +222,3 @@ SELECT * FROM buildings WHERE type = 'tavern' AND ST_DWithin(geom, player_locati
 -- Nearest road
 SELECT * FROM roads ORDER BY geom <-> player_location LIMIT 1;
 ```
-

@@ -17,6 +17,9 @@ set -euo pipefail
 # Preview
 # --preview [basename]         : Generate Leaflet layers preview (default size from --width/--height). Optional basename; defaults to {template}_{timestamp}. (default: disabled)
 # --preview-scale <float>      : Scale factor for preview size (default: 1.0)
+# --preview-layers <csv>       : Comma-separated layers to include in preview. Use 'all' or pick from:
+#                                cells, topography, hillshade, provinces, climate, biomes, cultures_cells,
+#                                watermask, burgs, rivers_smooth, rivers_polygons, routes, sea_routes, markers, regiments, coastlines
 # --no-relax                   : Disable Lloyd relaxation (flag) (default: false)
 
 # FMG .map export

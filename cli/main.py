@@ -35,6 +35,8 @@ from py_fmg.exporter_geojson import (
     build_rivers_smooth_fc,
     build_rivers_polygons_fc,
     build_topography_fc,
+    build_hillshade_fc,
+    export_hillshade_geojson,
 )
 from py_fmg.core.climate import Climate, ClimateOptions
 from py_fmg.core.biomes import BiomeClassifier
@@ -66,6 +68,16 @@ def main() -> None:
     # --preview [basename] : if provided, write Leaflet preview; basename optional, else default naming
     parser.add_argument("--geojson", nargs="?", default=None, const="", help="Enable GeoJSON export (optional basename)")
     parser.add_argument("--preview", nargs="?", default=None, const="", help="Enable Leaflet preview (optional basename)")
+    parser.add_argument(
+        "--preview-layers",
+        type=str,
+        default="all",
+        help=(
+            "Comma-separated list of layers to include in preview. "
+            "Use 'all' or pick from: cells, topography, hillshade, provinces, climate, biomes, "
+            "cultures_cells, watermask, burgs, rivers_smooth, rivers_polygons, routes, sea_routes, markers, regiments, coastlines"
+        ),
+    )
     parser.add_argument("--preview-scale", type=float, default=1.0, help="Scale factor for preview size relative to --width/--height")
     parser.add_argument("--no-relax", action="store_true", help="Disable Lloyd relaxation")
     # Export .map: enable by presence; default filename {template}_{timestamp}.map if no value given
@@ -205,7 +217,7 @@ def main() -> None:
         neighbors=graph.cell_neighbors,
     )
 
-    geo_path = coast_path = watermask_path = climate_path = biomes_path = topo_path = None
+    geo_path = coast_path = watermask_path = climate_path = biomes_path = topo_path = hillshade_path = None
     if geojson_enabled:
         geo_path = export_cells_geojson(graph, out_root, geojson_basename)
         print(f"Wrote cells: {geo_path}")
@@ -218,7 +230,9 @@ def main() -> None:
         print(f"Wrote climate: {climate_path}")
         biomes_path = export_biomes_geojson(graph, cell_biomes, biome_classifier, out_root, geojson_basename)
         topo_path = export_topography_geojson(graph, out_root, geojson_basename)
+        hillshade_path = export_hillshade_geojson(graph, out_root, geojson_basename)
         print(f"Wrote topography: {topo_path}")
+        print(f"Wrote hillshade: {hillshade_path}")
     # Rivers (after climate and features)
     hyd = Hydrology(
         graph,
@@ -435,12 +449,14 @@ def main() -> None:
                 sea_routes_fc = build_routes_fc(sea_routes, preview_name)
                 markers_fc = build_markers_fc(markers, preview_name)
                 regiments_fc = build_regiments_fc(regiments_by_state, preview_name)
+                hillshade_fc = build_hillshade_fc(graph, preview_name)
             else:
                 fc = json.loads(Path(geo_path).read_text(encoding='utf-8')) if geo_path else {"type":"FeatureCollection","features":[]}
                 coast_fc = json.loads(Path(coast_path).read_text(encoding='utf-8')) if coast_path else {"type":"FeatureCollection","features":[]}
                 climate_fc = json.loads(Path(climate_path).read_text(encoding='utf-8')) if climate_path else {"type":"FeatureCollection","features":[]}
                 biomes_fc = json.loads(Path(biomes_path).read_text(encoding='utf-8')) if biomes_path else {"type":"FeatureCollection","features":[]}
                 topo_fc = json.loads(Path(topo_path).read_text(encoding='utf-8')) if topo_path else {"type":"FeatureCollection","features":[]}
+                hillshade_fc = json.loads(Path(hillshade_path).read_text(encoding='utf-8')) if 'hillshade_path' in locals() and hillshade_path else {"type":"FeatureCollection","features":[]}
                 provinces_fc = json.loads(Path(provinces_path).read_text(encoding='utf-8')) if provinces_path else {"type":"FeatureCollection","features":[]}
                 watermask_fc = json.loads(Path(watermask_path).read_text(encoding='utf-8')) if watermask_path else {"type":"FeatureCollection","features":[]}
                 rivers_fc = json.loads(Path(rivers_path).read_text(encoding='utf-8')) if rivers_path else {"type":"FeatureCollection","features":[]}
@@ -461,24 +477,60 @@ def main() -> None:
             # Compute preview size (scaled)
             p_w = max(1, int(round(float(args.width) * float(args.preview_scale))))
             p_h = max(1, int(round(float(args.height) * float(args.preview_scale))))
+            # Assemble and filter preview layers based on --preview-layers
+            all_layer_order = [
+                "cells",
+                "topography",
+                "hillshade",
+                "provinces",
+                "climate",
+                "biomes",
+                "cultures_cells",
+                "watermask",
+                "burgs",
+                "rivers_smooth",
+                "rivers_polygons",
+                "routes",
+                "sea_routes",
+                "markers",
+                "regiments",
+                "coastlines",
+            ]
+            all_layers = {
+                "cells": fc,
+                "topography": topo_fc,
+                "hillshade": hillshade_fc,
+                "provinces": provinces_fc,
+                "climate": climate_fc,
+                "biomes": biomes_fc,
+                "cultures_cells": cultures_cells_fc,
+                "watermask": watermask_fc,
+                "burgs": burgs_fc,
+                "rivers_smooth": rivers_smooth_fc,
+                "rivers_polygons": rivers_polygons_fc,
+                "routes": routes_fc,
+                "sea_routes": sea_routes_fc,
+                "markers": markers_fc,
+                "regiments": regiments_fc,
+                "coastlines": coast_fc,
+            }
+            sel = str(args.preview_layers or "all").strip()
+            if sel.lower() == "all":
+                selected = set(all_layer_order)
+            else:
+                selected = set([s.strip() for s in sel.split(",") if s.strip()])
+                unknown = [s for s in selected if s not in all_layer_order]
+                if unknown:
+                    print(f"Warning: unknown preview layers ignored: {', '.join(sorted(unknown))}")
+                selected = {s for s in selected if s in all_layer_order}
+                if not selected:
+                    # Ensure at least something renders
+                    selected = {"cells"}
+
+            layers_filtered = {name: all_layers[name] for name in all_layer_order if name in selected}
+
             write_inline_leaflet_multi(
-                {
-                    "cells": fc,
-                    "topography": topo_fc,
-                    "provinces": provinces_fc,
-                    "climate": climate_fc,
-                    "biomes": biomes_fc,
-                    "cultures_cells": cultures_cells_fc,
-                    "watermask": watermask_fc,
-                    "burgs": burgs_fc,
-                    "rivers_smooth": rivers_smooth_fc,
-                    "rivers_polygons": rivers_polygons_fc,
-                    "routes": routes_fc,
-                    "sea_routes": sea_routes_fc,
-                    "markers": markers_fc,
-                    "regiments": regiments_fc,
-                    "coastlines": coast_fc
-                },
+                layers_filtered,
                 html2,
                 title=f"Map Preview — {preview_name}",
                 width=p_w,

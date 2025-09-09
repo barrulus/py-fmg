@@ -135,6 +135,15 @@ def write_inline_leaflet_multi(
           return {{ color: '#333', weight: 0.1, fillColor: c, fillOpacity: 0.85 }};
         }}
       }}
+      if (name === 'hillshade') {{
+        return function(f) {{
+          const p = f.properties || {{}};
+          const s = (typeof p.shade === 'number') ? p.shade : 0.5; // [0..1]
+          // Darken more when shade is low; keep subtle overall
+          const alpha = Math.max(0, Math.min(0.6, 0.7 * (1 - s)));
+          return {{ stroke: false, fillColor: '#000000', fillOpacity: alpha }};
+        }}
+      }}
       if (name === 'cultures_cells') {{
         return function(f) {{
           const c = (f.properties && f.properties.color) || '#cccccc';
