@@ -171,7 +171,7 @@ def build_topography_fc(graph: VoronoiGraph, map_id: str) -> Dict[str, Any]:
     return {"type": "FeatureCollection", "features": features}
 
 
-def build_hillshade_fc(graph: VoronoiGraph, map_id: str) -> Dict[str, Any]:
+def build_hillshade_fc(graph: VoronoiGraph, map_id: str, sea_level: float = 20.0) -> Dict[str, Any]:
     """Build hillshade-only layer as polygons with per-cell shade value.
 
     Shade is in [0,1]; consumers can style using fillOpacity or grayscale.
@@ -182,11 +182,17 @@ def build_hillshade_fc(graph: VoronoiGraph, map_id: str) -> Dict[str, Any]:
         ring = _cell_polygon(graph, i)
         if not ring:
             continue
+        h = float(graph.heights[i]) if getattr(graph, "heights", None) is not None else 0.0
+        # Skip water cells entirely
+        if h < sea_level:
+            continue
         shade = _compute_hillshade(graph, i)
         props = {
             "map_id": map_id,
             "cell_id": i,
             "shade": round(float(shade), 3),
+            "height": h,
+            "is_land": True,
             "layer": "hillshade",
         }
         features.append({

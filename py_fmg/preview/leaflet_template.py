@@ -138,6 +138,10 @@ def write_inline_leaflet_multi(
       if (name === 'hillshade') {{
         return function(f) {{
           const p = f.properties || {{}};
+          const h = (typeof p.height === 'number') ? p.height : null;
+          if (h !== null && h < 20) {{
+            return {{ stroke: false, fillColor: '#000000', fillOpacity: 0 }}; // no water shading
+          }}
           const s = (typeof p.shade === 'number') ? p.shade : 0.5; // [0..1]
           // Darken more when shade is low; keep subtle overall
           const alpha = Math.max(0, Math.min(0.6, 0.7 * (1 - s)));
